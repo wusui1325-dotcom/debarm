@@ -199,13 +199,18 @@ object CodexRuntime {
         "DEBIAN_FRONTEND" to "noninteractive",
     )
 
-    fun displayEnv(): Map<String, String> = guestEnv() + mapOf(
+    fun displayEnv(
+        screenWidth: Int = CodexCatalog.screenWidth,
+        screenHeight: Int = CodexCatalog.screenHeight,
+    ): Map<String, String> = guestEnv() + mapOf(
         "DISPLAY" to ":${CodexCatalog.displayNumber}",
         "LIBGL_ALWAYS_SOFTWARE" to "1",
         "GALLIUM_DRIVER" to "llvmpipe",
         "MESA_GL_VERSION_OVERRIDE" to "3.3",
         "ELECTRON_OZONE_PLATFORM_HINT" to "x11",
         "GDK_BACKEND" to "x11",
+        "DEBARM_SCREEN_W" to screenWidth.coerceIn(800, 2560).toString(),
+        "DEBARM_SCREEN_H" to screenHeight.coerceIn(480, 1600).toString(),
     )
 
     fun ensureStartScript(paths: DebArmPaths) {
@@ -233,7 +238,11 @@ object CodexRuntime {
     }
 
     /** Official desktop app on Xvfb, published to localhost noVNC. */
-    fun displayArgv(paths: DebArmPaths): Array<String> {
+    fun displayArgv(
+        paths: DebArmPaths,
+        screenWidth: Int = CodexCatalog.screenWidth,
+        screenHeight: Int = CodexCatalog.screenHeight,
+    ): Array<String> {
         ensureWorkspace(paths)
         ensureGuestUser(paths)
         ensureStartScript(paths)
@@ -246,7 +255,7 @@ object CodexRuntime {
             changeId = CodexCatalog.guestUidGid,
             kernelRelease = CodexCatalog.kernelRelease,
             bindApex = false,
-            extraGuestEnv = displayEnv(),
+            extraGuestEnv = displayEnv(screenWidth, screenHeight),
         )
     }
 
@@ -303,12 +312,14 @@ if command -v dbus-launch >/dev/null 2>&1 && [ -z "${'$'}{DBUS_SESSION_BUS_ADDRE
   export DBUS_SESSION_BUS_ADDRESS DBUS_SESSION_BUS_PID
 fi
 
-echo "debarm: starting Xvfb on :${CodexCatalog.displayNumber}"
+SCREEN_W="${'$'}{DEBARM_SCREEN_W:-${CodexCatalog.screenWidth}}"
+SCREEN_H="${'$'}{DEBARM_SCREEN_H:-${CodexCatalog.screenHeight}}"
+echo "debarm: starting Xvfb on :${CodexCatalog.displayNumber} (${'$'}SCREEN_W x ${'$'}SCREEN_H)"
 if ! command -v Xvfb >/dev/null 2>&1; then
   echo "debarm: Xvfb is not installed" >&2
   exit 1
 fi
-Xvfb :${CodexCatalog.displayNumber} -screen 0 ${CodexCatalog.screenWidth}x${CodexCatalog.screenHeight}x24 -ac +extension GLX +extension RANDR +extension RENDER -nolisten tcp -noreset >/tmp/xvfb.log 2>&1 &
+Xvfb :${CodexCatalog.displayNumber} -screen 0 ${'$'}{SCREEN_W}x${'$'}{SCREEN_H}x24 -ac +extension GLX +extension RANDR +extension RENDER -nolisten tcp -noreset >/tmp/xvfb.log 2>&1 &
 for i in ${'$'}(seq 1 80); do
   if command -v xdpyinfo >/dev/null 2>&1 && xdpyinfo -display :${CodexCatalog.displayNumber} >/dev/null 2>&1; then
     echo "debarm: Xvfb is ready"
@@ -327,6 +338,18 @@ if [ ! -S /tmp/.X11-unix/X${CodexCatalog.displayNumber} ]; then
 fi
 
 if command -v openbox >/dev/null 2>&1; then
+  mkdir -p /workspace/.config/openbox
+  cat > /workspace/.config/openbox/rc.xml << 'OBRC'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc" xml:lang="en">
+  <applications>
+    <application class="*">
+      <decor>no</decor>
+      <maximized>yes</maximized>
+    </application>
+  </applications>
+</openbox_config>
+OBRC
   openbox >/tmp/openbox.log 2>&1 &
   sleep 0.3
 fi
@@ -426,6 +449,7 @@ echo "debarm: launching official app ${'$'}CHATGPT"
   --disable-setuid-sandbox \
   --disable-seccomp-filter-sandbox \
   --in-process-gpu \
+  --start-maximized \
   "$@"
 STATUS=${'$'}?
 echo "debarm: chatgpt exited ${'$'}STATUS"

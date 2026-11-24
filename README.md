@@ -25,7 +25,8 @@
 - **1.1.5**：修好終端全黑、連提示符都沒有。改用原生文字顯示 PTY 輸出；對 bash 有效，但無法正確畫 Codex TUI。
 - **1.1.4**：修好輸入欄按 Enter／「前往」沒有把指令送進 shell。改用原生輸入欄與「送出」按鈕。
 - **1.1.3**：修好「鍵盤能打、終端卻不顯示文字」。1.1.2 能彈出軟鍵盤，但許多輸入法會把字母先當組字，要等到空白或 Enter 才送出。
-- **Codex 專屬版 1.0.11**（另開套件 `com.wusper.debarm.codex`）：修好 1.0.10 啟動官方桌面時停在 noVNC「Failed to connect to server」。上一版只要 6080 能提供網頁就把 WebView 連上去，但啟動腳本在 x11vnc 還沒聽 127.0.0.1:5900 時就繼續開 websockify；`-localhost` 可能只綁到 `::1`，且未加 `-noshm` 時 x11vnc 在 PRoot 裡常會立刻退出。這版會等 5900 與 6080 都就緒才自動連線，並補齊 noVNC 參數。覆蓋即可，不必重下載官方 deb。不影響通用 DebArm 1.1.8。
+- **Codex 專屬版 1.0.12**（另開套件 `com.wusper.debarm.codex`）：在 1.0.11 已能連上官方視窗之後，改成 App 自己的沉浸式全螢幕（不走瀏覽器 Fullscreen API，避免「Fullscreen is not supported」），藏掉 noVNC 左側工具列與「Connecting…」蓋層，並依裝置解析度（最長邊最多 1920）啟動 Xvfb，讓畫面鋪滿。左上角「選單」可退出全螢幕、看紀錄或開終端。覆蓋即可，不必重下載官方 deb。不影響通用 DebArm 1.1.8。
+- **Codex 專屬版 1.0.11**：修好 1.0.10 啟動官方桌面時停在 noVNC「Failed to connect to server」。會等 5900 與 6080 都就緒才自動連線。
 - **Codex 專屬版 1.0.10**：修好 1.0.9 在官方套件已 `Setting up chatgpt` 後仍報找不到執行檔。官方入口是 `/usr/bin/chatgpt`（指向 63 字元的 `codex-launcher`），真正的 ELF 是 `/usr/lib/chatgpt/ChatGPT`。詳見 [docs/CODEX.md](docs/CODEX.md)。
 - **1.1.2**：修好手機終端無法彈出軟鍵盤。先前畫面用的 xterm 輸入框在螢幕外且寬高為 0，Android 不會把它當可編輯欄。
 - **1.1.1**：修正安裝環境解壓後出現「無法執行 guest 指令（exit 139）」的問題。先前為了讓 PRoot 從 App 的 `nativeLibraryDir` 載入 `libtalloc`，用 patchelf 改寫了 ELF，卻破壞了 `INTERP` 與 `.dynstr` 段，導致 PRoot 一啟動就段錯誤。現在改用未改寫的上游二進制，在執行時把 `libtalloc.so.2` 放到 App 私有目錄並以 `LD_LIBRARY_PATH` 載入。PTY 函式庫也改為 16 KB 頁面對齊。請覆蓋安裝本版；若先前安裝失敗，請再點一次「安裝 Debian 環境」（已解壓的檔案可沿用）。

@@ -22,6 +22,8 @@ import kotlin.concurrent.thread
  */
 class DesktopSession(
     private val paths: DebArmPaths,
+    private val screenWidth: Int = com.wusper.debarm.core.CodexCatalog.screenWidth,
+    private val screenHeight: Int = com.wusper.debarm.core.CodexCatalog.screenHeight,
     private val onLog: (String) -> Unit,
     private val onReady: () -> Unit,
     private val onExit: (code: Int) -> Unit,
@@ -42,7 +44,7 @@ class DesktopSession(
             paths.ensureWorkDirs()
             Proot.assertRunnable(paths)
             Pty.ensureLoaded()
-            val argv = CodexRuntime.displayArgv(paths)
+            val argv = CodexRuntime.displayArgv(paths, screenWidth, screenHeight)
             val ids = Pty.nativeStart(
                 argv = argv,
                 envp = Proot.envp(paths),

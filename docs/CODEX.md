@@ -30,7 +30,7 @@
 4. `websockify` + noVNC（`127.0.0.1:6080`）
 5. 官方 `/usr/bin/chatgpt`，並加上 Electron 在沒有真實桌面／GPU 時需要的參數（`--no-sandbox`、`--ozone-platform=x11`、`--disable-gpu` 等）
 
-Android 端要等 **5900 與 6080 都在聽**、且 `vnc.html` 可取用後，才用 WebView 打開 `http://127.0.0.1:6080/vnc.html?autoconnect=true&reconnect=true&encrypt=0&host=127.0.0.1&port=6080&path=websockify`。因為 PRoot 與 App 共用網路命名空間，guest 聽的本機埠就是裝置上的本機埠。頂列會依序回報 Xvfb、x11vnc、websockify、chatgpt 的狀態；畫面連上後不會被後續啟動訊息蓋掉。必要時可展開紀錄。
+Android 端要等 **5900 與 6080 都在聽**、且 `vnc.html` 可取用後，才用 WebView 打開 `http://127.0.0.1:6080/vnc.html?autoconnect=true&reconnect=true&encrypt=0&host=127.0.0.1&port=6080&path=websockify`。因為 PRoot 與 App 共用網路命名空間，guest 聽的本機埠就是裝置上的本機埠。連線過程由 App 自己顯示簡短狀態，並注入樣式藏掉 noVNC 的「Connecting…」蓋層與左側工具列。連上後進入 App 沉浸式全螢幕（WebView 鋪滿，不呼叫瀏覽器 Fullscreen API）；左上角「選單」可退出全螢幕、看紀錄或開終端。Xvfb 解析度依裝置螢幕計算（最長邊最多 1920），openbox 會最大化官方視窗。啟動過程的狀態仍會寫進紀錄。
 
 這是**軟體繪製的 X11**，不是裝置原生視窗，可能較慢或偶有閃爍。第一次進入官方 App 需要用你自己的 OpenAI／ChatGPT 帳號登入。官方程式若無法在 PRoot 裡活下來，視窗會停在紀錄頁，可改用「開啟終端（後援）」排查。終端是工作區登入 shell，**不再預設啟動 musl CLI**。
 
