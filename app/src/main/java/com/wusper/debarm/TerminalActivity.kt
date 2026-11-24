@@ -1,18 +1,20 @@
 package com.wusper.debarm
 
-import android.graphics.Typeface
+import android.annotation.SuppressLint
 import android.os.Bundle
+import android.os.Looper
 import android.text.InputType
 import android.util.Base64
-import android.util.TypedValue
-import android.view.Gravity
 import android.view.KeyEvent
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.EditText
-import android.widget.ScrollView
-import android.widget.TextView
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -46,28 +48,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.wusper.debarm.terminal.TerminalBuffer
+import com.wusper.debarm.terminal.TerminalBridge
 import com.wusper.debarm.terminal.TerminalInputView
+import com.wusper.debarm.terminal.TerminalPage
 import com.wusper.debarm.terminal.TerminalSession
-import com.wusper.debarm.ui.Cream
 import com.wusper.debarm.ui.DebArmTheme
 import com.wusper.debarm.ui.Gold
 import com.wusper.debarm.ui.Ink
 import com.wusper.debarm.ui.Muted
 import com.wusper.debarm.ui.Paper
+import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 
 /**
- * Terminal screen. Output is rendered by a native TextView, not xterm.js.
+ * Terminal screen. PTY output is drawn by an inlined xterm.js page
+ * (loadDataWithBaseURL, no file:///android_asset script loads).
  *
- * 1.1.0–1.1.4 painted PTY output only through a WebView calling into
- * xterm.js via evaluateJavascript. If the page's relative scripts failed
- * to load (common with file:///android_asset and
- * allowFileAccessFromFileURLs=false, especially on Xiaomi WebView), or if
- * the first flush ran on the JavascriptInterface background thread, the
- * canvas stayed the page background colour (#14120F) with no prompt. That
- * matches the 1.1.4 screenshots: a black terminal, Send appearing to do
- * nothing because echo never became visible.
+ * Codex CLI is a TUI (CSI, alternate screen, cursor addressing). The
+ * 1.1.5 TextView path stripped those sequences, so bash prompts were
+ * visible but Codex looked blank even after hundreds of bytes arrived.
  */
 class TerminalActivity : ComponentActivity() {
     companion object {
@@ -75,13 +74,14 @@ class TerminalActivity : ComponentActivity() {
     }
 
     private var session: TerminalSession? = null
+    private var webView: WebView? = null
     private var commandField: EditText? = null
-    private var outputView: TextView? = null
-    private var scroller: ScrollView? = null
     private var ctrlOn = false
     private var started = false
+    private var jsReady = false
+    private var bytesIn = 0L
+    private val pendingOutput = ArrayList<String>()
     private val pendingInput = ArrayList<ByteArray>()
-    private val buffer = TerminalBuffer()
     private val statusText = mutableStateOf("正在啟動終端…")
     private var requestBarFocus: (() -> Unit)? = null
 
@@ -115,14 +115,13 @@ class TerminalActivity : ComponentActivity() {
                             .background(Paper)
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     )
-                    TerminalOutputView(
+                    TerminalWebView(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                        onReady = { scroll, tv ->
-                            scroller = scroll
-                            outputView = tv
-                            if (!started) attachSession(paths)
+                        onReady = { wv ->
+                            webView = wv
+                            if (!started) attachSession(wv, paths)
                         },
                     )
                     TerminalInputBar(
@@ -146,7 +145,7 @@ class TerminalActivity : ComponentActivity() {
                             ctrlOn = ctrl
                         },
                         onShowKeyboard = { requestBarFocus?.invoke() },
-                        onSend = { data -> writeToPty(itOrToast(data)) },
+                        onSend = { data -> writeToPty(data) },
                         onSubmit = { submitFromField() },
                     )
                 }
@@ -167,8 +166,6 @@ class TerminalActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    private fun itOrToast(data: ByteArray): ByteArray = data
-
     private fun submitFromField() {
         val field = commandField
         val line = field?.text?.toString() ?: ""
@@ -185,12 +182,9 @@ class TerminalActivity : ComponentActivity() {
         if (!writeToPty(payload)) {
             statusText.value = "無法寫入 PTY。請再試一次，或關閉後重新開啟終端。"
             Toast.makeText(this, statusText.value, Toast.LENGTH_SHORT).show()
-        } else if (line.isNotEmpty()) {
-            // If the shell echoes, we will also see the line from PTY output.
-            // If echo is off, still show what we sent so the screen is not silent.
-            statusText.value = "已送出 ${line.length} 字元 + Enter · 已收 ${buffer.bytesIn} 字元"
         } else {
-            statusText.value = "已送出 Enter · 已收 ${buffer.bytesIn} 字元"
+            val sent = if (line.isEmpty()) "Enter" else "${line.length} 字元 + Enter"
+            statusText.value = "已送出 $sent · 已收 $bytesIn 字元"
         }
     }
 
@@ -219,59 +213,100 @@ class TerminalActivity : ComponentActivity() {
         queued.forEach { writeToPty(it) }
     }
 
-    private fun appendOutput(bytes: ByteArray) {
-        val snapshot = buffer.append(bytes)
-        val tv = outputView
-        if (tv == null) return
-        tv.text = snapshot
-        scroller?.post { scroller?.fullScroll(ScrollView.FOCUS_DOWN) }
-        statusText.value = "PTY 已連線 · 已收 ${buffer.bytesIn} 字元"
+    private fun runOnUi(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block()
+        else webView?.post(block) ?: runOnUiThread(block)
     }
 
-    private fun appendHost(msg: String) {
-        buffer.appendHostMessage(msg)
-        outputView?.text = buffer.snapshot()
-        scroller?.post { scroller?.fullScroll(ScrollView.FOCUS_DOWN) }
+    private fun pushToTerminal(wv: WebView, b64: String) {
+        runOnUi {
+            if (!jsReady) {
+                pendingOutput.add(b64)
+                return@runOnUi
+            }
+            val payload = JSONObject.quote(b64)
+            wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.writeBase64($payload)", null)
+        }
     }
 
-    private fun attachSession(paths: com.wusper.debarm.core.DebArmPaths) {
+    private fun fitAndFlush(wv: WebView) {
+        runOnUi {
+            jsReady = true
+            pendingOutput.forEach { b64 ->
+                val payload = JSONObject.quote(b64)
+                wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.writeBase64($payload)", null)
+            }
+            pendingOutput.clear()
+            wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
+            requestBarFocus?.invoke()
+            statusText.value = if (bytesIn > 0) {
+                "PTY 已連線 · 畫面已就緒 · 已收 $bytesIn 字元"
+            } else {
+                "畫面已就緒，等候 shell 輸出…"
+            }
+        }
+    }
+
+    private fun attachSession(wv: WebView, paths: com.wusper.debarm.core.DebArmPaths) {
         if (started) return
         started = true
-        appendHost("正在啟動 PTY 與登入 shell…")
         statusText.value = "正在啟動 PTY…"
         val launchCodex = intent.getBooleanExtra(EXTRA_LAUNCH_CODEX, BuildConfig.CODEX_EDITION)
         val session = TerminalSession(
             paths = paths,
             launchCodex = launchCodex,
             onOutput = { b64 ->
-                val bytes = try {
-                    Base64.decode(b64, Base64.NO_WRAP)
+                val n = try {
+                    Base64.decode(b64, Base64.NO_WRAP).size
                 } catch (_: Exception) {
-                    return@TerminalSession
+                    0
                 }
-                appendOutput(bytes)
+                bytesIn += n
+                pushToTerminal(wv, b64)
+                runOnUi {
+                    if (jsReady) {
+                        statusText.value = "PTY 已連線 · 已收 $bytesIn 字元"
+                    }
+                }
             },
             onExit = { code ->
                 val msg = if (code >= 0) "工作階段已結束（exit $code）" else "工作階段已結束"
-                statusText.value = msg
-                appendHost(msg)
-                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                runOnUi {
+                    statusText.value = msg
+                    Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+                }
             },
         )
         this.session = session
+        val bridge = TerminalBridge(
+            onInput = { bytes -> writeToPty(bytes) },
+            onSize = { rows, cols -> session.resize(rows, cols) },
+            onReady = { fitAndFlush(wv) },
+            onError = { err ->
+                runOnUi { statusText.value = "終端畫面載入失敗：$err" }
+            },
+        )
+        wv.addJavascriptInterface(bridge, "DebArm")
+        wv.loadDataWithBaseURL(
+            "https://appassets.androidplatform.net/assets/terminal/",
+            TerminalPage.html(this),
+            "text/html",
+            "UTF-8",
+            null,
+        )
         try {
             session.start(24, 80)
             flushPendingInput()
             statusText.value = if (session.isLive) {
-                "PTY 已啟動，等候 shell 輸出…"
+                "PTY 已啟動，正在載入畫面…"
             } else {
                 "PTY 啟動後未進入連線狀態"
             }
-            // If no bytes arrive shortly, say so on-screen instead of staying blank.
-            outputView?.postDelayed({
-                if (buffer.bytesIn == 0L && session.isLive) {
-                    appendHost("PTY 已啟動，但 2 秒內沒有收到任何輸出。請在下方輸入 uname -m 後按「送出」。")
-                    statusText.value = "PTY 已啟動但尚無輸出 · 請按送出測試"
+            wv.postDelayed({
+                if (!jsReady) {
+                    statusText.value = "畫面尚未就緒。PTY 已收 $bytesIn 字元。請關閉後重開終端。"
+                } else {
+                    wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
                 }
             }, 2000)
         } catch (e: Exception) {
@@ -279,7 +314,6 @@ class TerminalActivity : ComponentActivity() {
             this.session = null
             val msg = "無法啟動終端：${e.message}"
             statusText.value = msg
-            appendHost(msg)
             Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
         }
     }
@@ -287,54 +321,54 @@ class TerminalActivity : ComponentActivity() {
     override fun onDestroy() {
         session?.close()
         session = null
+        webView?.apply {
+            loadUrl("about:blank")
+            destroy()
+        }
+        webView = null
         commandField = null
-        outputView = null
-        scroller = null
         requestBarFocus = null
         super.onDestroy()
     }
 }
 
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun TerminalOutputView(
+private fun TerminalWebView(
     modifier: Modifier,
-    onReady: (ScrollView, TextView) -> Unit,
+    onReady: (WebView) -> Unit,
 ) {
     AndroidView(
-        modifier = modifier.background(Ink),
+        modifier = modifier,
         factory = { ctx ->
-            val tv = TextView(ctx).apply {
-                setTextColor(0xFFF6F1E8.toInt())
-                setBackgroundColor(0xFF12100D.toInt())
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-                typeface = Typeface.MONOSPACE
-                setPadding(
-                    (8 * ctx.resources.displayMetrics.density).toInt(),
-                    (8 * ctx.resources.displayMetrics.density).toInt(),
-                    (8 * ctx.resources.displayMetrics.density).toInt(),
-                    (8 * ctx.resources.displayMetrics.density).toInt(),
-                )
-                setTextIsSelectable(true)
-                gravity = Gravity.TOP or Gravity.START
-                text = ""
-            }
-            val scroll = ScrollView(ctx).apply {
-                layoutParams = ViewGroup.LayoutParams(
+            WebView(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
-                setBackgroundColor(0xFF12100D.toInt())
-                isFillViewport = true
-                addView(
-                    tv,
-                    ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ),
-                )
+                setBackgroundColor(0xFF14120F.toInt())
+                isFocusable = false
+                isFocusableInTouchMode = false
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = false
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
+                @Suppress("DEPRECATION")
+                settings.allowFileAccessFromFileURLs = false
+                @Suppress("DEPRECATION")
+                settings.allowUniversalAccessFromFileURLs = false
+                webChromeClient = WebChromeClient()
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        request: WebResourceRequest?,
+                    ): Boolean = true
+                }
+                addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+                    evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
+                }
+                onReady(this)
             }
-            onReady(scroll, tv)
-            scroll
         },
     )
 }

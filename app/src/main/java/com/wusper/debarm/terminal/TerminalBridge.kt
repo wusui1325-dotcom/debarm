@@ -7,6 +7,7 @@ class TerminalBridge(
     private val onInput: (ByteArray) -> Unit,
     private val onSize: (rows: Int, cols: Int) -> Unit,
     private val onReady: () -> Unit,
+    private val onError: (String) -> Unit = {},
 ) {
     @JavascriptInterface
     fun onInput(b64: String) {
@@ -26,5 +27,10 @@ class TerminalBridge(
     @JavascriptInterface
     fun onReady() {
         onReady.invoke()
+    }
+
+    @JavascriptInterface
+    fun onError(message: String?) {
+        onError.invoke(message ?: "未知錯誤")
     }
 }

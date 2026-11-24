@@ -19,10 +19,11 @@
 
 ## 版本
 
-- **1.1.5**：修好終端全黑、連提示符都沒有（按「送出」也看不出反應）。先前 PTY 輸出只經 WebView 呼叫 xterm.js 顯示；在部分裝置（含小米 WebView）`file:///android_asset` 的相對腳本無法載入，加上第一次輸出可能在非 UI 執行緒刷新，畫面就一直停在背景色。現在改用原生文字顯示 PTY 輸出，頂列會顯示連線狀態。請覆蓋安裝本版。
+- **1.1.6**：修好 Codex TUI 已收到輸出卻畫面空白。1.1.5 的純文字顯示會丟掉 CSI／alternate screen／游標定位，bash 提示符看得到，但 `codex` 這類全螢幕介面會變成一塊黑。現在改把 xterm.js 內嵌進單一 HTML，用 `loadDataWithBaseURL` 載入（不再走 `file:///android_asset` 相對腳本），並在 UI 執行緒寫入畫面。連線後不再把「正在啟動 PTY…」留在終端內容裡。請覆蓋安裝本版。
+- **1.1.5**：修好終端全黑、連提示符都沒有。改用原生文字顯示 PTY 輸出；對 bash 有效，但無法正確畫 Codex TUI。
 - **1.1.4**：修好輸入欄按 Enter／「前往」沒有把指令送進 shell。改用原生輸入欄與「送出」按鈕。
 - **1.1.3**：修好「鍵盤能打、終端卻不顯示文字」。1.1.2 能彈出軟鍵盤，但許多輸入法會把字母先當組字，要等到空白或 Enter 才送出。
-- **Codex 專屬版 1.0.4**（另開套件 `com.wusper.debarm.codex`）：沿用同一套終端輸入與 Enter／送出修正。只啟動官方 Codex，工作區在 App 私有目錄，並可申請裝置儲存完全權限。詳見 [docs/CODEX.md](docs/CODEX.md)。不影響通用 DebArm。
+- **Codex 專屬版 1.0.5**（另開套件 `com.wusper.debarm.codex`）：沿用同一套終端輸入與 Enter／送出修正。只啟動官方 Codex，工作區在 App 私有目錄，並可申請裝置儲存完全權限。詳見 [docs/CODEX.md](docs/CODEX.md)。不影響通用 DebArm。
 - **1.1.2**：修好手機終端無法彈出軟鍵盤。先前畫面用的 xterm 輸入框在螢幕外且寬高為 0，Android 不會把它當可編輯欄。
 - **1.1.1**：修正安裝環境解壓後出現「無法執行 guest 指令（exit 139）」的問題。先前為了讓 PRoot 從 App 的 `nativeLibraryDir` 載入 `libtalloc`，用 patchelf 改寫了 ELF，卻破壞了 `INTERP` 與 `.dynstr` 段，導致 PRoot 一啟動就段錯誤。現在改用未改寫的上游二進制，在執行時把 `libtalloc.so.2` 放到 App 私有目錄並以 `LD_LIBRARY_PATH` 載入。PTY 函式庫也改為 16 KB 頁面對齊。請覆蓋安裝本版；若先前安裝失敗，請再點一次「安裝 Debian 環境」（已解壓的檔案可沿用）。
 - **1.1.0**：APK 從約 19.45 MB 壓到約 1.57 MB，並整理介面與套件清單效能。
