@@ -119,6 +119,19 @@ Java_com_wusper_debarm_core_Pty_nativeStart(
         if (slave < 0) _exit(126);
         ioctl(slave, TIOCSCTTY, 0);
         ioctl(slave, TIOCSWINSZ, &ws);
+        {
+            struct termios tio;
+            if (tcgetattr(slave, &tio) == 0) {
+                tio.c_iflag |= ICRNL;
+#ifdef IUTF8
+                tio.c_iflag |= IUTF8;
+#endif
+                tio.c_oflag |= OPOST | ONLCR;
+                tio.c_lflag |= ISIG | ICANON | ECHO | ECHOE | ECHOK | IEXTEN;
+                tio.c_cflag |= CREAD;
+                tcsetattr(slave, TCSANOW, &tio);
+            }
+        }
         dup2(slave, 0);
         dup2(slave, 1);
         dup2(slave, 2);

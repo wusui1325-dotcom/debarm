@@ -49,9 +49,7 @@
   }
 
   window.addEventListener("resize", doFit);
-  function focusTerm() { try { term.focus(); } catch (e) {} }
-  document.addEventListener("touchstart", focusTerm, {passive: true});
-  document.addEventListener("click", focusTerm);
+  // Do not steal focus from the native input bar on Android.
   term.onData(function (data) {
     if (window.DebArm && window.DebArm.onInput) {
       window.DebArm.onInput(toB64(data));
@@ -63,15 +61,18 @@
       const bin = atob(b64);
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      term.write(bytes);
+      try {
+        term.write(new TextDecoder("utf-8").decode(bytes));
+      } catch (e) {
+        term.write(bytes);
+      }
     },
     fit: doFit,
-    focus: function () { term.focus(); }
+    focus: function () { /* focus stays on the Android input bar */ }
   };
 
   setTimeout(function () {
     doFit();
-    term.focus();
     if (window.DebArm && window.DebArm.onReady) window.DebArm.onReady();
   }, 30);
 })();

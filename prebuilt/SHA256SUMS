@@ -1,5 +1,5 @@
 # jni libs (PRoot is the unmodified Termux binary; libtalloc.so.2 is staged at runtime)
-2f255aaa23250900d3a682b8a6423021fa4d1ebc7b79a788e0dad326ef7f93c5  arm64-v8a/libdebarm-pty.so
+be3b428fe8a815b1a0fa4f8a7cb1a4b1122f90228866dd1e4c15d1a3007bcb2a  arm64-v8a/libdebarm-pty.so
 3621937c1c5a98d0d39ca599af573a6bc15128690606d535e8b05da00cec4f41  arm64-v8a/libproot.so
 1da54355333cca3fb6ee10e3b82a24df24fb230c99241ce83809bf9e240609b5  arm64-v8a/libproot-loader.so
 219c7aa6c4a4dcf26c2f942c080eac52e71b06758fc5b14864e0175e6acf2d6c  arm64-v8a/libtalloc.so

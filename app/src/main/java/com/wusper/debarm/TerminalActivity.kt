@@ -27,16 +27,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -47,6 +57,7 @@ import com.wusper.debarm.ui.DebArmTheme
 import com.wusper.debarm.ui.Gold
 import com.wusper.debarm.ui.Ink
 import com.wusper.debarm.ui.Paper
+import org.json.JSONObject
 
 class TerminalActivity : ComponentActivity() {
     companion object {
@@ -58,6 +69,9 @@ class TerminalActivity : ComponentActivity() {
     private var inputView: TerminalInputView? = null
     private var ctrlOn = false
     private var started = false
+    private var jsReady = false
+    private val pendingOutput = ArrayList<String>()
+    private var requestBarFocus: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,6 +85,13 @@ class TerminalActivity : ComponentActivity() {
         setContent {
             DebArmTheme {
                 var ctrl by remember { mutableStateOf(false) }
+                val barFocus = remember { FocusRequester() }
+                LaunchedEffect(Unit) {
+                    requestBarFocus = {
+                        runCatching { barFocus.requestFocus() }
+                    }
+                    runCatching { barFocus.requestFocus() }
+                }
                 Column(
                     Modifier
                         .fillMaxSize()
@@ -88,8 +109,15 @@ class TerminalActivity : ComponentActivity() {
                             inputView = iv
                             iv.onInput = { writePossiblyCtrl(it) }
                             attachSession(wv, paths)
-                            iv.post { iv.showKeyboard() }
                         },
+                    )
+                    TerminalInputBar(
+                        focusRequester = barFocus,
+                        onDiff = { old, new ->
+                            val bytes = TerminalInputView.diffToBytes(old, new)
+                            if (bytes.isNotEmpty()) writePossiblyCtrl(bytes)
+                        },
+                        onEnter = { writePossiblyCtrl(byteArrayOf('\r'.code.toByte())) },
                     )
                     ExtraKeys(
                         ctrlOn = ctrl,
@@ -97,7 +125,9 @@ class TerminalActivity : ComponentActivity() {
                             ctrl = !ctrl
                             ctrlOn = ctrl
                         },
-                        onShowKeyboard = { inputView?.showKeyboard() },
+                        onShowKeyboard = {
+                            runCatching { barFocus.requestFocus() }
+                        },
                         onSend = { data -> writePossiblyCtrl(data) },
                     )
                 }
@@ -107,7 +137,7 @@ class TerminalActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        inputView?.showKeyboard()
+        window.decorView.post { requestBarFocus?.invoke() }
     }
 
     private fun writePossiblyCtrl(bytes: ByteArray) {
@@ -122,15 +152,23 @@ class TerminalActivity : ComponentActivity() {
         session?.write(bytes)
     }
 
+    private fun pushToTerminal(wv: WebView, b64: String) {
+        if (!jsReady) {
+            pendingOutput.add(b64)
+            return
+        }
+        val payload = JSONObject.quote(b64)
+        wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.writeBase64($payload)", null)
+    }
+
     private fun attachSession(wv: WebView, paths: com.wusper.debarm.core.DebArmPaths) {
         if (started) return
+        started = true
         val launchCodex = intent.getBooleanExtra(EXTRA_LAUNCH_CODEX, BuildConfig.CODEX_EDITION)
         val session = TerminalSession(
             paths = paths,
             launchCodex = launchCodex,
-            onOutput = { b64 ->
-                wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.writeBase64('$b64')", null)
-            },
+            onOutput = { b64 -> pushToTerminal(wv, b64) },
             onExit = { code ->
                 val msg = if (code >= 0) "工作階段已結束（$code）" else "工作階段已結束"
                 Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
@@ -141,18 +179,20 @@ class TerminalActivity : ComponentActivity() {
             onInput = { bytes -> writePossiblyCtrl(bytes) },
             onSize = { rows, cols -> session.resize(rows, cols) },
             onReady = {
-                if (!started) {
-                    started = true
-                    session.start(24, 80)
-                    wv.postDelayed({
-                        wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
-                    }, 40)
-                    inputView?.showKeyboard()
-                }
+                jsReady = true
+                pendingOutput.forEach { pushToTerminal(wv, it) }
+                pendingOutput.clear()
+                wv.postDelayed({
+                    wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
+                }, 40)
+                wv.post { requestBarFocus?.invoke() }
             },
         )
         wv.addJavascriptInterface(bridge, "DebArm")
         wv.loadUrl("file:///android_asset/terminal/index.html")
+        // Start the PTY immediately so early keystrokes are not dropped
+        // waiting for the WebView to finish loading xterm.js.
+        session.start(24, 80)
     }
 
     override fun onDestroy() {
@@ -164,6 +204,7 @@ class TerminalActivity : ComponentActivity() {
         }
         webView = null
         inputView = null
+        requestBarFocus = null
         super.onDestroy()
     }
 }
@@ -202,7 +243,14 @@ private fun TerminalView(
                 }
             }
             val input = TerminalInputView(ctx).apply {
-                layoutParams = FrameLayout.LayoutParams(1, 1)
+                // Give IME a real on-screen box; keep it visually hidden.
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    (48 * ctx.resources.displayMetrics.density).toInt(),
+                ).apply {
+                    gravity = android.view.Gravity.BOTTOM
+                }
+                alpha = 0f
             }
             webView.setOnTouchListener { _, ev ->
                 if (ev.action == MotionEvent.ACTION_DOWN) input.showKeyboard()
@@ -218,6 +266,60 @@ private fun TerminalView(
                 onReady(webView, input)
             }
         },
+    )
+}
+
+@Composable
+private fun TerminalInputBar(
+    focusRequester: FocusRequester,
+    onDiff: (old: String, new: String) -> Unit,
+    onEnter: () -> Unit,
+) {
+    var draft by remember { mutableStateOf("") }
+    OutlinedTextField(
+        value = draft,
+        onValueChange = { new ->
+            if (new.contains('\n') || new.contains('\r')) {
+                val without = new.filter { it != '\n' && it != '\r' }
+                if (without != draft) onDiff(draft, without)
+                onEnter()
+                draft = ""
+                return@OutlinedTextField
+            }
+            onDiff(draft, new)
+            draft = new
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Paper)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .focusRequester(focusRequester),
+        singleLine = true,
+        placeholder = { Text("在此輸入，文字會立刻出現在終端") },
+        keyboardOptions = KeyboardOptions(
+            capitalization = KeyboardCapitalization.None,
+            autoCorrectEnabled = false,
+            keyboardType = KeyboardType.Text,
+            imeAction = ImeAction.Go,
+        ),
+        keyboardActions = KeyboardActions(
+            onGo = {
+                onEnter()
+                draft = ""
+            },
+        ),
+        shape = RoundedCornerShape(12.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Ink,
+            unfocusedTextColor = Ink,
+            focusedBorderColor = Gold,
+            unfocusedBorderColor = Gold.copy(alpha = 0.5f),
+            cursorColor = Gold,
+            focusedPlaceholderColor = Ink.copy(alpha = 0.45f),
+            unfocusedPlaceholderColor = Ink.copy(alpha = 0.45f),
+            focusedContainerColor = Color.White.copy(alpha = 0.92f),
+            unfocusedContainerColor = Color.White.copy(alpha = 0.92f),
+        ),
     )
 }
 

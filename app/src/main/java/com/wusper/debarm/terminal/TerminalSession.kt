@@ -3,11 +3,12 @@ package com.wusper.debarm.terminal
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
-import com.wusper.debarm.core.DebArmPaths
 import com.wusper.debarm.core.CodexRuntime
+import com.wusper.debarm.core.DebArmPaths
 import com.wusper.debarm.core.Proot
 import com.wusper.debarm.core.Pty
 import java.io.ByteArrayOutputStream
+import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
@@ -21,6 +22,8 @@ class TerminalSession(
     private var masterFd = -1
     private var pid = -1
     private val main = Handler(Looper.getMainLooper())
+    private val writeLock = Any()
+    private val pendingWrites = ArrayDeque<ByteArray>()
 
     fun start(rows: Int, cols: Int) {
         if (!running.compareAndSet(false, true)) return
@@ -35,8 +38,13 @@ class TerminalSession(
             rows = rows,
             cols = cols,
         )
-        masterFd = ids[0]
-        pid = ids[1]
+        synchronized(writeLock) {
+            masterFd = ids[0]
+            pid = ids[1]
+            while (pendingWrites.isNotEmpty()) {
+                writeUnlocked(pendingWrites.removeFirst())
+            }
+        }
         thread(name = "debarm-pty-read", isDaemon = true) {
             val buf = ByteArray(32 * 1024)
             val pending = ByteArrayOutputStream(32 * 1024)
@@ -52,8 +60,6 @@ class TerminalSession(
                     if (n < 0) break
                     if (n == 0) continue
                     pending.write(buf, 0, n)
-                    // A short read usually means the burst ended (e.g. a prompt).
-                    // Long full buffers are flushed in chunks for apt-like output.
                     if (n < buf.size || pending.size() >= 16 * 1024) {
                         flush()
                     }
@@ -69,26 +75,43 @@ class TerminalSession(
     }
 
     fun write(bytes: ByteArray) {
-        if (!running.get() || masterFd < 0 || bytes.isEmpty()) return
+        if (bytes.isEmpty()) return
+        synchronized(writeLock) {
+            if (masterFd < 0) {
+                pendingWrites.addLast(bytes.copyOf())
+                return
+            }
+            writeUnlocked(bytes)
+        }
+    }
+
+    private fun writeUnlocked(bytes: ByteArray) {
+        val fd = masterFd
+        if (fd < 0) return
         var off = 0
         while (off < bytes.size) {
-            val n = Pty.nativeWrite(masterFd, bytes, off, bytes.size - off)
+            val n = Pty.nativeWrite(fd, bytes, off, bytes.size - off)
             if (n <= 0) break
             off += n
         }
     }
 
     fun resize(rows: Int, cols: Int) {
-        if (masterFd >= 0) Pty.nativeSetWinsize(masterFd, rows, cols)
+        val fd = masterFd
+        if (fd >= 0) Pty.nativeSetWinsize(fd, rows, cols)
     }
 
     fun close() {
-        if (!running.getAndSet(false) && masterFd < 0) return
         running.set(false)
-        val p = pid
-        val fd = masterFd
-        pid = -1
-        masterFd = -1
+        val p: Int
+        val fd: Int
+        synchronized(writeLock) {
+            pendingWrites.clear()
+            p = pid
+            fd = masterFd
+            pid = -1
+            masterFd = -1
+        }
         if (p > 0) {
             Pty.nativeKill(p, 15)
             Thread.sleep(80)

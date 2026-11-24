@@ -19,8 +19,9 @@
 
 ## 版本
 
-- **Codex 專屬版 1.0.0**（另開套件 `com.wusper.debarm.codex`）：只啟動官方 Codex CLI，工作區在 App 私有目錄，並可申請裝置儲存完全權限。詳見 [docs/CODEX.md](docs/CODEX.md)。不影響通用 DebArm。
-- **1.1.2**：修好手機終端無法打字。先前畫面用的 xterm 輸入框在螢幕外且寬高為 0，Android 不會彈出軟鍵盤。現在由原生 IME 把輸入轉進 PTY，底列也有「鍵盤」按鈕。
+- **1.1.3**：修好「鍵盤能打、終端卻不顯示文字」。1.1.2 能彈出軟鍵盤，但許多輸入法（尤其 Gboard）會把字母先當組字（`setComposingText`），要等到空白或 Enter 才 `commitText`；舊版把組字當沒發生，字就進不了 PTY。現在組字與已確認的字都會即時送到終端，PTY 明確開啟回顯，PTY 在畫面載入完成前就啟動（避免開頭的輸入被丟掉），並且在終端下方加了一列看得見的輸入欄。請覆蓋安裝本版。
+- **Codex 專屬版 1.0.2**（另開套件 `com.wusper.debarm.codex`）：沿用同一套終端輸入修正。只啟動官方 Codex，工作區在 App 私有目錄，並可申請裝置儲存完全權限。詳見 [docs/CODEX.md](docs/CODEX.md)。不影響通用 DebArm。
+- **1.1.2**：修好手機終端無法彈出軟鍵盤。先前畫面用的 xterm 輸入框在螢幕外且寬高為 0，Android 不會把它當可編輯欄。
 - **1.1.1**：修正安裝環境解壓後出現「無法執行 guest 指令（exit 139）」的問題。先前為了讓 PRoot 從 App 的 `nativeLibraryDir` 載入 `libtalloc`，用 patchelf 改寫了 ELF，卻破壞了 `INTERP` 與 `.dynstr` 段，導致 PRoot 一啟動就段錯誤。現在改用未改寫的上游二進制，在執行時把 `libtalloc.so.2` 放到 App 私有目錄並以 `LD_LIBRARY_PATH` 載入。PTY 函式庫也改為 16 KB 頁面對齊。請覆蓋安裝本版；若先前安裝失敗，請再點一次「安裝 Debian 環境」（已解壓的檔案可沿用）。
 - **1.1.0**：APK 從約 19.45 MB 壓到約 1.57 MB，並整理介面與套件清單效能。
 - **1.0.0**：第一個可側載版本。
