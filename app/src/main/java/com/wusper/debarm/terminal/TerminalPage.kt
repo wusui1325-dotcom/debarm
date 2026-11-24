@@ -11,6 +11,63 @@ import android.content.Context
  * secondary file request at all.
  */
 object TerminalPage {
+
+    const val PAGE_HOST = "appassets.androidplatform.net"
+    const val PAGE_URL = "https://appassets.androidplatform.net/assets/terminal/index.html"
+
+    /**
+     * Serve the inlined page (and any relative assets) from a real https
+     * origin. Modern Chromium WebView does not inject @JavascriptInterface
+     * into the opaque origin that loadDataWithBaseURL often gets, so
+     * window.DebArm stays undefined and onReady never runs.
+     */
+    fun intercept(context: Context, request: android.webkit.WebResourceRequest): android.webkit.WebResourceResponse? {
+        val url = request.url ?: return null
+        if (url.host != PAGE_HOST) return null
+        val path = url.path ?: return null
+        val isIndex = path.endsWith("/terminal/index.html") ||
+            path.endsWith("/terminal/") ||
+            path.endsWith("/terminal")
+        return try {
+            if (isIndex) {
+                stream("text/html", html(context).toByteArray(Charsets.UTF_8))
+            } else {
+                val asset = path.removePrefix("/assets/").trimStart('/')
+                val mime = when {
+                    asset.endsWith(".js") -> "application/javascript"
+                    asset.endsWith(".css") -> "text/css"
+                    asset.endsWith(".html") -> "text/html"
+                    else -> "application/octet-stream"
+                }
+                val bytes = context.assets.open(asset).use { it.readBytes() }
+                stream(mime, bytes)
+            }
+        } catch (_: Exception) {
+            android.webkit.WebResourceResponse(
+                "text/plain",
+                "UTF-8",
+                404,
+                "Not Found",
+                mapOf("Access-Control-Allow-Origin" to "https://$PAGE_HOST"),
+                java.io.ByteArrayInputStream(ByteArray(0)),
+            )
+        }
+    }
+
+    private fun stream(mime: String, bytes: ByteArray): android.webkit.WebResourceResponse {
+        return android.webkit.WebResourceResponse(
+            mime,
+            "UTF-8",
+            200,
+            "OK",
+            mapOf(
+                "Cache-Control" to "no-store",
+                "Access-Control-Allow-Origin" to "https://$PAGE_HOST",
+            ),
+            java.io.ByteArrayInputStream(bytes),
+        )
+    }
+
     fun html(context: Context): String {
         val css = readAsset(context, "terminal/xterm.css")
         val xterm = sanitize(readAsset(context, "terminal/xterm.js"))
@@ -111,10 +168,19 @@ $css
       cols: function () { return term.cols; },
       rows: function () { return term.rows; }
     };
-    setTimeout(function () {
+    function notifyReady() {
       doFit();
-      if (window.DebArm && window.DebArm.onReady) window.DebArm.onReady();
-    }, 20);
+      if (window.DebArm && window.DebArm.onReady) {
+        window.DebArm.onReady();
+        return true;
+      }
+      return false;
+    }
+    var tries = 0;
+    (function wait() {
+      if (notifyReady()) return;
+      if (++tries < 80) setTimeout(wait, 50);
+    })();
   } catch (err) {
     report(err && err.message ? err.message : err);
   }

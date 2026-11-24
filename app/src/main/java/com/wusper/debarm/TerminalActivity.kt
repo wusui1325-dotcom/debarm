@@ -62,7 +62,8 @@ import java.nio.charset.StandardCharsets
 
 /**
  * Terminal screen. PTY output is drawn by an inlined xterm.js page
- * (loadDataWithBaseURL, no file:///android_asset script loads).
+ * served from https://appassets.androidplatform.net via shouldInterceptRequest
+ * (a real https origin, so @JavascriptInterface is injected).
  *
  * Codex CLI is a TUI (CSI, alternate screen, cursor addressing). The
  * 1.1.5 TextView path stripped those sequences, so bash prompts were
@@ -229,22 +230,73 @@ class TerminalActivity : ComponentActivity() {
         }
     }
 
-    private fun fitAndFlush(wv: WebView) {
-        runOnUi {
-            jsReady = true
-            pendingOutput.forEach { b64 ->
-                val payload = JSONObject.quote(b64)
-                wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.writeBase64($payload)", null)
-            }
-            pendingOutput.clear()
+    private fun markScreenReady(wv: WebView) {
+        if (jsReady) {
             wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
-            requestBarFocus?.invoke()
-            statusText.value = if (bytesIn > 0) {
-                "PTY 已連線 · 畫面已就緒 · 已收 $bytesIn 字元"
-            } else {
-                "畫面已就緒，等候 shell 輸出…"
+            return
+        }
+        jsReady = true
+        pendingOutput.forEach { b64 ->
+            val payload = JSONObject.quote(b64)
+            wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.writeBase64($payload)", null)
+        }
+        pendingOutput.clear()
+        wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
+        requestBarFocus?.invoke()
+        statusText.value = if (bytesIn > 0) {
+            "PTY 已連線 · 畫面已就緒 · 已收 $bytesIn 字元"
+        } else {
+            "畫面已就緒，等候 shell 輸出…"
+        }
+    }
+
+    private fun fitAndFlush(wv: WebView) {
+        runOnUi { markScreenReady(wv) }
+    }
+
+    /**
+     * Do not rely on DebArm.onReady alone. That callback needs
+     * @JavascriptInterface, which modern WebView may not inject for some
+     * origins. If DebArmTerm exists we can flush via evaluateJavascript.
+     */
+    private fun probeAndFlush(wv: WebView) {
+        runOnUi {
+            if (jsReady) {
+                wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
+                return@runOnUi
+            }
+            wv.evaluateJavascript(
+                "(function(){try{return !!(window.DebArmTerm&&typeof DebArmTerm.writeBase64==='function');}catch(e){return false;}})()",
+            ) { result ->
+                if (result != null && result.contains("true")) {
+                    markScreenReady(wv)
+                }
             }
         }
+    }
+
+    private fun watchReady(wv: WebView, attempt: Int = 0) {
+        wv.postDelayed({
+            if (jsReady) return@postDelayed
+            probeAndFlush(wv)
+            if (jsReady) return@postDelayed
+            if (attempt < 40) {
+                statusText.value = "正在載入畫面… 已收 $bytesIn 字元"
+                watchReady(wv, attempt + 1)
+            } else {
+                statusText.value = "畫面尚未就緒。PTY 已收 $bytesIn 字元。若稍後出現內容，頂列會改為就緒。"
+                // Keep probing a bit longer in case a late load succeeds.
+                watchReadyLate(wv, 0)
+            }
+        }, 200)
+    }
+
+    private fun watchReadyLate(wv: WebView, attempt: Int) {
+        wv.postDelayed({
+            if (jsReady) return@postDelayed
+            probeAndFlush(wv)
+            if (!jsReady && attempt < 15) watchReadyLate(wv, attempt + 1)
+        }, 1000)
     }
 
     private fun attachSession(wv: WebView, paths: com.wusper.debarm.core.DebArmPaths) {
@@ -265,7 +317,7 @@ class TerminalActivity : ComponentActivity() {
                 pushToTerminal(wv, b64)
                 runOnUi {
                     if (jsReady) {
-                        statusText.value = "PTY 已連線 · 已收 $bytesIn 字元"
+                        statusText.value = "PTY 已連線 · 畫面已就緒 · 已收 $bytesIn 字元"
                     }
                 }
             },
@@ -286,14 +338,23 @@ class TerminalActivity : ComponentActivity() {
                 runOnUi { statusText.value = "終端畫面載入失敗：$err" }
             },
         )
+        wv.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest,
+            ) = TerminalPage.intercept(view.context, request)
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest,
+            ): Boolean = request.url?.host != TerminalPage.PAGE_HOST
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                probeAndFlush(view)
+            }
+        }
         wv.addJavascriptInterface(bridge, "DebArm")
-        wv.loadDataWithBaseURL(
-            "https://appassets.androidplatform.net/assets/terminal/",
-            TerminalPage.html(this),
-            "text/html",
-            "UTF-8",
-            null,
-        )
+        wv.loadUrl(TerminalPage.PAGE_URL)
         try {
             session.start(24, 80)
             flushPendingInput()
@@ -302,13 +363,7 @@ class TerminalActivity : ComponentActivity() {
             } else {
                 "PTY 啟動後未進入連線狀態"
             }
-            wv.postDelayed({
-                if (!jsReady) {
-                    statusText.value = "畫面尚未就緒。PTY 已收 $bytesIn 字元。請關閉後重開終端。"
-                } else {
-                    wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
-                }
-            }, 2000)
+            watchReady(wv)
         } catch (e: Exception) {
             started = false
             this.session = null
@@ -359,10 +414,15 @@ private fun TerminalWebView(
                 settings.allowUniversalAccessFromFileURLs = false
                 webChromeClient = WebChromeClient()
                 webViewClient = object : WebViewClient() {
+                    override fun shouldInterceptRequest(
+                        view: WebView,
+                        request: WebResourceRequest,
+                    ) = TerminalPage.intercept(view.context, request)
+
                     override fun shouldOverrideUrlLoading(
-                        view: WebView?,
-                        request: WebResourceRequest?,
-                    ): Boolean = true
+                        view: WebView,
+                        request: WebResourceRequest,
+                    ): Boolean = request.url?.host != TerminalPage.PAGE_HOST
                 }
                 addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
                     evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
