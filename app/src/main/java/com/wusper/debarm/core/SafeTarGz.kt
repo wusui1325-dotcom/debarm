@@ -37,6 +37,58 @@ object SafeTarGz {
         onProgress("完成", count)
     }
 
+    /**
+     * Extract the official complete `codex-package-*.tar.gz` so
+     * `codex-package.json`, `bin/codex`, and bundled resources stay together.
+     */
+    fun extractCodexPackage(archive: File, destDir: File) {
+        val tmp = File(destDir.parentFile, ".codex-pkg-extract").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        try {
+            extract(archive, tmp)
+            val root = findPackageRoot(tmp)
+                ?: throw IOException("官方套件裡找不到 codex-package.json 與 bin/codex。")
+            if (destDir.exists()) destDir.deleteRecursively()
+            destDir.parentFile?.mkdirs()
+            if (!root.renameTo(destDir)) {
+                root.copyRecursively(destDir, overwrite = true)
+                root.deleteRecursively()
+            }
+            hardenPackage(destDir)
+        } finally {
+            tmp.deleteRecursively()
+        }
+    }
+
+    private fun findPackageRoot(dir: File): File? {
+        fun isRoot(candidate: File): Boolean =
+            File(candidate, "codex-package.json").isFile &&
+                File(candidate, "bin/codex").isFile
+        if (isRoot(dir)) return dir
+        return dir.walkTopDown().maxDepth(3).firstOrNull { it.isDirectory && isRoot(it) }
+    }
+
+    private fun hardenPackage(dest: File) {
+        val executables = listOf(
+            "bin/codex",
+            "bin/codex-code-mode-host",
+            "bin/codex-exec-server",
+            "codex-path/rg",
+            "codex-resources/rg",
+            "codex-resources/bwrap",
+        )
+        for (rel in executables) {
+            val f = File(dest, rel)
+            if (f.isFile) f.setExecutable(true, false)
+        }
+        val alias = File(dest, "codex")
+        if (!alias.exists()) {
+            Files.createSymbolicLink(alias.toPath(), File("bin/codex").toPath())
+        }
+    }
+
     fun extractCodexBinary(archive: File, destFile: File) {
         val tmp = File(destFile.parentFile, ".codex-extract").apply {
             deleteRecursively()

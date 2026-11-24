@@ -84,9 +84,13 @@ object CodexRuntime {
     fun argv(paths: DebArmPaths): Array<String> {
         ensureWorkspace(paths)
         ensureGuestUser(paths)
+        // --no-daemon: the packaged CLI can start a background app-server
+        // from a complete tree, but under PRoot that daemon (bwrap, unix
+        // sockets, a second process) is unreliable. The flag also lets a
+        // leftover bare 0.172.0 binary from 1.0.7 open the TUI at all.
         return Proot.argv(
             paths = paths,
-            guestCommand = listOf(CodexCatalog.guestBinaryPath),
+            guestCommand = listOf(guestBinary(paths), "--no-daemon"),
             cwd = "/workspace",
             raw = true,
             extraBinds = storageBinds(paths),
@@ -97,13 +101,29 @@ object CodexRuntime {
         )
     }
 
+    fun packageRoot(paths: DebArmPaths): File =
+        File(paths.rootfsDir, CodexCatalog.packageRoot.removePrefix("/"))
+
     fun officialBinary(paths: DebArmPaths): File =
-        File(paths.rootfsDir, "usr/local/bin/codex")
+        File(paths.rootfsDir, CodexCatalog.guestBinaryPath.removePrefix("/"))
+
+    fun legacyBinary(paths: DebArmPaths): File =
+        File(paths.rootfsDir, CodexCatalog.legacyBinaryPath.removePrefix("/"))
+
+    fun guestBinary(paths: DebArmPaths): String =
+        if (isPackaged(paths)) CodexCatalog.guestBinaryPath else CodexCatalog.legacyBinaryPath
+
+    fun isPackaged(paths: DebArmPaths): Boolean {
+        val json = File(packageRoot(paths), "codex-package.json")
+        val bin = officialBinary(paths)
+        return json.isFile && bin.isFile && bin.length() > 1_000_000L
+    }
 
     fun isInstalled(paths: DebArmPaths): Boolean {
-        val bin = officialBinary(paths)
-        return bin.isFile && bin.length() > 1_000_000L &&
-            paths.codexReadyMarker.exists() &&
-            paths.codexReadyMarker.readText().contains(CodexCatalog.version)
+        if (!paths.codexReadyMarker.exists()) return false
+        if (!paths.codexReadyMarker.readText().contains(CodexCatalog.version)) return false
+        if (isPackaged(paths)) return true
+        val bare = legacyBinary(paths)
+        return bare.isFile && bare.length() > 1_000_000L
     }
 }

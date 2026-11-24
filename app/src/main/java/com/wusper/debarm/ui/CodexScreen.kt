@@ -69,7 +69,7 @@ fun CodexScreen(
     ) {
         Text("Codex", style = MaterialTheme.typography.headlineLarge, color = Cream)
         Text(
-            "只跑官方 Codex CLI。工作區在 App 私有目錄；對裝置儲存申請完全權限，讓內外空間互聯。環境會讓 Codex 以為自己在一部 Debian 電腦上，並可上網。",
+            "只跑官方 Codex／ChatGPT。工作區在 App 私有目錄；對裝置儲存申請完全權限，讓內外空間互聯。環境會讓程式以為自己在一部 Debian 電腦上，並可上網。正式目標是官方 Linux 桌面 .deb；目前先啟動官方完整 CLI 套件。",
             style = MaterialTheme.typography.bodyMedium,
             color = Muted,
         )
@@ -85,9 +85,13 @@ fun CodexScreen(
                     Text(state.debianLabel, color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
-                    "官方 Codex ${CodexCatalog.version}" +
-                        if (state.codexReady) " · 已就緒" else " · 尚未安裝",
-                    color = if (state.codexReady) Moss else GoldDim,
+                    "官方 Codex CLI ${CodexCatalog.version}" +
+                        when {
+                            state.codexPackaged -> " · 完整套件已就緒"
+                            state.codexReady -> " · 可啟動（精簡安裝，建議升級完整套件）"
+                            else -> " · 尚未安裝"
+                        },
+                    color = if (state.codexPackaged) Moss else if (state.codexReady) GoldDim else GoldDim,
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 val used = if (state.diskUsedBytes > 0) {
@@ -148,11 +152,16 @@ fun CodexScreen(
         ) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("官方來源", style = MaterialTheme.typography.titleMedium, color = Cream)
-                Text("OpenAI Codex CLI ${CodexCatalog.version}（${CodexCatalog.gitTag}）", color = Cream, style = MaterialTheme.typography.bodySmall)
+                Text("OpenAI Codex CLI ${CodexCatalog.version}（${CodexCatalog.gitTag}）完整套件", color = Cream, style = MaterialTheme.typography.bodySmall)
                 Text("產物：${CodexCatalog.assetName}", fontFamily = FontFamily.Monospace, color = Muted, style = MaterialTheme.typography.bodySmall)
                 Text("SHA-256：${CodexCatalog.sha256}", fontFamily = FontFamily.Monospace, color = Muted, style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "安裝腳本 ${CodexCatalog.officialInstallSh}；優先 ${CodexCatalog.primaryUrl}，備用 GitHub Releases。授權 ${CodexCatalog.license}。這不是 ChatGPT 桌面版 .deb，OpenAI 並未發行官方 Codex CLI .deb。",
+                    "與官方安裝腳本相同的完整套件（含 codex-package.json 與附屬資源），不是只解出單一 musl 執行檔。來源：${CodexCatalog.officialInstallSh}，優先 ${CodexCatalog.primaryUrl}，備用 GitHub Releases。授權 ${CodexCatalog.license}。",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "官方 Linux 桌面版是 ${CodexCatalog.DesktopDeb.assetName}（${CodexCatalog.DesktopDeb.version}，見 ${CodexCatalog.officialDocs}）。一鍵開啟該視窗還沒出貨；目前「啟動 Codex」會進入官方完整 CLI，並加上 --no-daemon，以便在 PRoot 裡穩定使用。",
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -167,6 +176,15 @@ fun CodexScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Ink),
             ) {
                 Text("啟動 Codex")
+            }
+            if (!state.codexPackaged) {
+                OutlinedButton(
+                    onClick = onPrepare,
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("升級為官方完整 CLI 套件（約 193 MB）")
+                }
             }
         } else {
             Button(
