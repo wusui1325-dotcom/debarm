@@ -1,19 +1,18 @@
 package com.wusper.debarm
 
-import android.annotation.SuppressLint
+import android.graphics.Typeface
 import android.os.Bundle
 import android.text.InputType
+import android.util.Base64
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.EditText
-import android.widget.FrameLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -47,30 +46,43 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.wusper.debarm.terminal.TerminalBridge
+import com.wusper.debarm.terminal.TerminalBuffer
 import com.wusper.debarm.terminal.TerminalInputView
 import com.wusper.debarm.terminal.TerminalSession
+import com.wusper.debarm.ui.Cream
 import com.wusper.debarm.ui.DebArmTheme
 import com.wusper.debarm.ui.Gold
 import com.wusper.debarm.ui.Ink
+import com.wusper.debarm.ui.Muted
 import com.wusper.debarm.ui.Paper
-import org.json.JSONObject
 import java.nio.charset.StandardCharsets
 
+/**
+ * Terminal screen. Output is rendered by a native TextView, not xterm.js.
+ *
+ * 1.1.0–1.1.4 painted PTY output only through a WebView calling into
+ * xterm.js via evaluateJavascript. If the page's relative scripts failed
+ * to load (common with file:///android_asset and
+ * allowFileAccessFromFileURLs=false, especially on Xiaomi WebView), or if
+ * the first flush ran on the JavascriptInterface background thread, the
+ * canvas stayed the page background colour (#14120F) with no prompt. That
+ * matches the 1.1.4 screenshots: a black terminal, Send appearing to do
+ * nothing because echo never became visible.
+ */
 class TerminalActivity : ComponentActivity() {
     companion object {
         const val EXTRA_LAUNCH_CODEX = "launch_codex"
     }
 
     private var session: TerminalSession? = null
-    private var webView: WebView? = null
-    private var inputView: TerminalInputView? = null
     private var commandField: EditText? = null
+    private var outputView: TextView? = null
+    private var scroller: ScrollView? = null
     private var ctrlOn = false
     private var started = false
-    private var jsReady = false
-    private val pendingOutput = ArrayList<String>()
     private val pendingInput = ArrayList<ByteArray>()
+    private val buffer = TerminalBuffer()
+    private val statusText = mutableStateOf("正在啟動終端…")
     private var requestBarFocus: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,6 +97,7 @@ class TerminalActivity : ComponentActivity() {
         setContent {
             DebArmTheme {
                 var ctrl by remember { mutableStateOf(false) }
+                val status by statusText
                 Column(
                     Modifier
                         .fillMaxSize()
@@ -93,17 +106,24 @@ class TerminalActivity : ComponentActivity() {
                         .navigationBarsPadding()
                         .imePadding(),
                 ) {
-                    TerminalView(
+                    Text(
+                        status,
+                        color = Muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Paper)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                    TerminalOutputView(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                        onReady = { wv, iv ->
-                            webView = wv
-                            inputView = iv
-                            iv.onInput = { writeToPty(it) }
-                            attachSession(wv, paths)
+                        onReady = { scroll, tv ->
+                            scroller = scroll
+                            outputView = tv
+                            if (!started) attachSession(paths)
                         },
-                        onTap = { requestBarFocus?.invoke() },
                     )
                     TerminalInputBar(
                         onFieldReady = { field ->
@@ -126,7 +146,7 @@ class TerminalActivity : ComponentActivity() {
                             ctrlOn = ctrl
                         },
                         onShowKeyboard = { requestBarFocus?.invoke() },
-                        onSend = { data -> writeToPty(data) },
+                        onSend = { data -> writeToPty(itOrToast(data)) },
                         onSubmit = { submitFromField() },
                     )
                 }
@@ -147,7 +167,8 @@ class TerminalActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    /** Send the command box text plus CR, or CR alone if the box is empty. */
+    private fun itOrToast(data: ByteArray): ByteArray = data
+
     private fun submitFromField() {
         val field = commandField
         val line = field?.text?.toString() ?: ""
@@ -162,7 +183,14 @@ class TerminalActivity : ComponentActivity() {
             (line + "\r").toByteArray(StandardCharsets.UTF_8)
         }
         if (!writeToPty(payload)) {
-            Toast.makeText(this, "無法送到終端。請再試一次，或關閉後重新開啟終端。", Toast.LENGTH_SHORT).show()
+            statusText.value = "無法寫入 PTY。請再試一次，或關閉後重新開啟終端。"
+            Toast.makeText(this, statusText.value, Toast.LENGTH_SHORT).show()
+        } else if (line.isNotEmpty()) {
+            // If the shell echoes, we will also see the line from PTY output.
+            // If echo is off, still show what we sent so the screen is not silent.
+            statusText.value = "已送出 ${line.length} 字元 + Enter · 已收 ${buffer.bytesIn} 字元"
+        } else {
+            statusText.value = "已送出 Enter · 已收 ${buffer.bytesIn} 字元"
         }
     }
 
@@ -180,9 +208,7 @@ class TerminalActivity : ComponentActivity() {
             return false
         }
         val ok = s.write(data)
-        if (!ok) {
-            pendingInput.add(data.copyOf())
-        }
+        if (!ok) pendingInput.add(data.copyOf())
         return ok
     }
 
@@ -193,120 +219,122 @@ class TerminalActivity : ComponentActivity() {
         queued.forEach { writeToPty(it) }
     }
 
-    private fun pushToTerminal(wv: WebView, b64: String) {
-        if (!jsReady) {
-            pendingOutput.add(b64)
-            return
-        }
-        val payload = JSONObject.quote(b64)
-        wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.writeBase64($payload)", null)
+    private fun appendOutput(bytes: ByteArray) {
+        val snapshot = buffer.append(bytes)
+        val tv = outputView
+        if (tv == null) return
+        tv.text = snapshot
+        scroller?.post { scroller?.fullScroll(ScrollView.FOCUS_DOWN) }
+        statusText.value = "PTY 已連線 · 已收 ${buffer.bytesIn} 字元"
     }
 
-    private fun attachSession(wv: WebView, paths: com.wusper.debarm.core.DebArmPaths) {
+    private fun appendHost(msg: String) {
+        buffer.appendHostMessage(msg)
+        outputView?.text = buffer.snapshot()
+        scroller?.post { scroller?.fullScroll(ScrollView.FOCUS_DOWN) }
+    }
+
+    private fun attachSession(paths: com.wusper.debarm.core.DebArmPaths) {
         if (started) return
         started = true
+        appendHost("正在啟動 PTY 與登入 shell…")
+        statusText.value = "正在啟動 PTY…"
         val launchCodex = intent.getBooleanExtra(EXTRA_LAUNCH_CODEX, BuildConfig.CODEX_EDITION)
         val session = TerminalSession(
             paths = paths,
             launchCodex = launchCodex,
-            onOutput = { b64 -> pushToTerminal(wv, b64) },
+            onOutput = { b64 ->
+                val bytes = try {
+                    Base64.decode(b64, Base64.NO_WRAP)
+                } catch (_: Exception) {
+                    return@TerminalSession
+                }
+                appendOutput(bytes)
+            },
             onExit = { code ->
-                val msg = if (code >= 0) "工作階段已結束（$code）" else "工作階段已結束"
+                val msg = if (code >= 0) "工作階段已結束（exit $code）" else "工作階段已結束"
+                statusText.value = msg
+                appendHost(msg)
                 Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
             },
         )
         this.session = session
-        val bridge = TerminalBridge(
-            onInput = { bytes -> writeToPty(bytes) },
-            onSize = { rows, cols -> session.resize(rows, cols) },
-            onReady = {
-                jsReady = true
-                pendingOutput.forEach { pushToTerminal(wv, it) }
-                pendingOutput.clear()
-                wv.postDelayed({
-                    wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
-                }, 40)
-                wv.post { requestBarFocus?.invoke() }
-            },
-        )
-        wv.addJavascriptInterface(bridge, "DebArm")
-        wv.loadUrl("file:///android_asset/terminal/index.html")
         try {
             session.start(24, 80)
             flushPendingInput()
+            statusText.value = if (session.isLive) {
+                "PTY 已啟動，等候 shell 輸出…"
+            } else {
+                "PTY 啟動後未進入連線狀態"
+            }
+            // If no bytes arrive shortly, say so on-screen instead of staying blank.
+            outputView?.postDelayed({
+                if (buffer.bytesIn == 0L && session.isLive) {
+                    appendHost("PTY 已啟動，但 2 秒內沒有收到任何輸出。請在下方輸入 uname -m 後按「送出」。")
+                    statusText.value = "PTY 已啟動但尚無輸出 · 請按送出測試"
+                }
+            }, 2000)
         } catch (e: Exception) {
             started = false
             this.session = null
-            Toast.makeText(this, "無法啟動終端：${e.message}", Toast.LENGTH_LONG).show()
+            val msg = "無法啟動終端：${e.message}"
+            statusText.value = msg
+            appendHost(msg)
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
         }
     }
 
     override fun onDestroy() {
         session?.close()
         session = null
-        webView?.apply {
-            loadUrl("about:blank")
-            destroy()
-        }
-        webView = null
-        inputView = null
         commandField = null
+        outputView = null
+        scroller = null
         requestBarFocus = null
         super.onDestroy()
     }
 }
 
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun TerminalView(
+private fun TerminalOutputView(
     modifier: Modifier,
-    onReady: (WebView, TerminalInputView) -> Unit,
-    onTap: () -> Unit,
+    onReady: (ScrollView, TextView) -> Unit,
 ) {
     AndroidView(
-        modifier = modifier,
+        modifier = modifier.background(Ink),
         factory = { ctx ->
-            val webView = WebView(ctx).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT,
+            val tv = TextView(ctx).apply {
+                setTextColor(0xFFF6F1E8.toInt())
+                setBackgroundColor(0xFF12100D.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+                typeface = Typeface.MONOSPACE
+                setPadding(
+                    (8 * ctx.resources.displayMetrics.density).toInt(),
+                    (8 * ctx.resources.displayMetrics.density).toInt(),
+                    (8 * ctx.resources.displayMetrics.density).toInt(),
+                    (8 * ctx.resources.displayMetrics.density).toInt(),
                 )
-                setBackgroundColor(0xFF14120F.toInt())
-                isFocusable = false
-                isFocusableInTouchMode = false
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = false
-                settings.allowFileAccess = true
-                settings.allowContentAccess = false
-                @Suppress("DEPRECATION")
-                settings.allowFileAccessFromFileURLs = false
-                @Suppress("DEPRECATION")
-                settings.allowUniversalAccessFromFileURLs = false
-                webChromeClient = WebChromeClient()
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(
-                        view: WebView?,
-                        request: WebResourceRequest?,
-                    ): Boolean = true
-                }
+                setTextIsSelectable(true)
+                gravity = Gravity.TOP or Gravity.START
+                text = ""
             }
-            val input = TerminalInputView(ctx).apply {
-                layoutParams = FrameLayout.LayoutParams(1, 1)
-                alpha = 0f
-            }
-            webView.setOnTouchListener { _, ev ->
-                if (ev.action == MotionEvent.ACTION_DOWN) onTap()
-                false
-            }
-            FrameLayout(ctx).apply {
+            val scroll = ScrollView(ctx).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
-                addView(webView)
-                addView(input)
-                onReady(webView, input)
+                setBackgroundColor(0xFF12100D.toInt())
+                isFillViewport = true
+                addView(
+                    tv,
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
             }
+            onReady(scroll, tv)
+            scroll
         },
     )
 }

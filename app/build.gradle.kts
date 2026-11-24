@@ -14,8 +14,8 @@ android {
         // guest binaries from the app's writable filesDir (the Debian rootfs).
         // This app is meant to be sideloaded, not Play-distributed.
         targetSdk = 28
-        versionCode = 6
-        versionName = "1.1.4"
+        versionCode = 7
+        versionName = "1.1.5"
         ndk {
             abiFilters += "arm64-v8a"
         }
@@ -35,8 +35,8 @@ android {
         create("codex") {
             dimension = "edition"
             applicationId = "com.wusper.debarm.codex"
-            versionCode = 4
-            versionName = "1.0.3"
+            versionCode = 5
+            versionName = "1.0.4"
             buildConfigField("boolean", "CODEX_EDITION", "true")
         }
     }
