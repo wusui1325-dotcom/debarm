@@ -2,12 +2,14 @@ package com.wusper.debarm
 
 import android.annotation.SuppressLint
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -39,12 +41,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.wusper.debarm.terminal.TerminalBridge
+import com.wusper.debarm.terminal.TerminalInputView
 import com.wusper.debarm.terminal.TerminalSession
 import com.wusper.debarm.ui.DebArmTheme
 import com.wusper.debarm.ui.Gold
 import com.wusper.debarm.ui.Ink
 import com.wusper.debarm.ui.Paper
-import com.wusper.debarm.ui.PaperHigh
 
 class TerminalActivity : ComponentActivity() {
     companion object {
@@ -53,12 +55,17 @@ class TerminalActivity : ComponentActivity() {
 
     private var session: TerminalSession? = null
     private var webView: WebView? = null
+    private var inputView: TerminalInputView? = null
     private var ctrlOn = false
     private var started = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE,
+        )
         enableEdgeToEdge()
         val paths = (application as DebArmApp).env.pathsPublic
         setContent {
@@ -76,9 +83,12 @@ class TerminalActivity : ComponentActivity() {
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxWidth(),
-                        onReadyWebView = { wv ->
+                        onReady = { wv, iv ->
                             webView = wv
+                            inputView = iv
+                            iv.onInput = { writePossiblyCtrl(it) }
                             attachSession(wv, paths)
+                            iv.post { iv.showKeyboard() }
                         },
                     )
                     ExtraKeys(
@@ -87,11 +97,29 @@ class TerminalActivity : ComponentActivity() {
                             ctrl = !ctrl
                             ctrlOn = ctrl
                         },
-                        onSend = { data -> writeToSession(data) },
+                        onShowKeyboard = { inputView?.showKeyboard() },
+                        onSend = { data -> writePossiblyCtrl(data) },
                     )
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        inputView?.showKeyboard()
+    }
+
+    private fun writePossiblyCtrl(bytes: ByteArray) {
+        if (bytes.isEmpty()) return
+        if (ctrlOn && bytes.size == 1) {
+            val c = bytes[0].toInt() and 0xff
+            if (c in 64..127) {
+                session?.write(byteArrayOf((c and 31).toByte()))
+                return
+            }
+        }
+        session?.write(bytes)
     }
 
     private fun attachSession(wv: WebView, paths: com.wusper.debarm.core.DebArmPaths) {
@@ -110,17 +138,7 @@ class TerminalActivity : ComponentActivity() {
         )
         this.session = session
         val bridge = TerminalBridge(
-            onInput = { bytes ->
-                if (ctrlOn && bytes.size == 1) {
-                    val c = bytes[0].toInt()
-                    if (c in 64..127) {
-                        session.write(byteArrayOf((c and 31).toByte()))
-                        runOnUiThread { /* keep toggle until pressed again */ }
-                        return@TerminalBridge
-                    }
-                }
-                session.write(bytes)
-            },
+            onInput = { bytes -> writePossiblyCtrl(bytes) },
             onSize = { rows, cols -> session.resize(rows, cols) },
             onReady = {
                 if (!started) {
@@ -129,15 +147,12 @@ class TerminalActivity : ComponentActivity() {
                     wv.postDelayed({
                         wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.fit()", null)
                     }, 40)
+                    inputView?.showKeyboard()
                 }
             },
         )
         wv.addJavascriptInterface(bridge, "DebArm")
         wv.loadUrl("file:///android_asset/terminal/index.html")
-    }
-
-    private fun writeToSession(data: ByteArray) {
-        session?.write(data)
     }
 
     override fun onDestroy() {
@@ -148,6 +163,7 @@ class TerminalActivity : ComponentActivity() {
             destroy()
         }
         webView = null
+        inputView = null
         super.onDestroy()
     }
 }
@@ -156,17 +172,19 @@ class TerminalActivity : ComponentActivity() {
 @Composable
 private fun TerminalView(
     modifier: Modifier,
-    onReadyWebView: (WebView) -> Unit,
+    onReady: (WebView, TerminalInputView) -> Unit,
 ) {
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
-            WebView(ctx).apply {
-                layoutParams = ViewGroup.LayoutParams(
+            val webView = WebView(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
                 setBackgroundColor(0xFF14120F.toInt())
+                isFocusable = false
+                isFocusableInTouchMode = false
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = false
                 settings.allowFileAccess = true
@@ -182,7 +200,22 @@ private fun TerminalView(
                         request: WebResourceRequest?,
                     ): Boolean = true
                 }
-                onReadyWebView(this)
+            }
+            val input = TerminalInputView(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(1, 1)
+            }
+            webView.setOnTouchListener { _, ev ->
+                if (ev.action == MotionEvent.ACTION_DOWN) input.showKeyboard()
+                false
+            }
+            FrameLayout(ctx).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                addView(webView)
+                addView(input)
+                onReady(webView, input)
             }
         },
     )
@@ -192,9 +225,11 @@ private fun TerminalView(
 private fun ExtraKeys(
     ctrlOn: Boolean,
     onToggleCtrl: () -> Unit,
+    onShowKeyboard: () -> Unit,
     onSend: (ByteArray) -> Unit,
 ) {
     val keys = listOf(
+        KeySpec("鍵盤", special = "kbd"),
         KeySpec("Esc", "\u001b"),
         KeySpec("Tab", "\t"),
         KeySpec("Ctrl", special = "ctrl"),
@@ -221,8 +256,11 @@ private fun ExtraKeys(
             val selected = key.special == "ctrl" && ctrlOn
             TextButton(
                 onClick = {
-                    if (key.special == "ctrl") onToggleCtrl()
-                    else onSend(key.text.encodeToByteArray())
+                    when (key.special) {
+                        "ctrl" -> onToggleCtrl()
+                        "kbd" -> onShowKeyboard()
+                        else -> onSend(key.text.encodeToByteArray())
+                    }
                 },
                 colors = ButtonDefaults.textButtonColors(
                     contentColor = if (selected) Ink else Gold,

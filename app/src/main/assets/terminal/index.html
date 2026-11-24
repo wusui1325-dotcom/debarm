@@ -7,6 +7,18 @@
   <style>
     html, body { height: 100%; margin: 0; background: #14120F; overflow: hidden; }
     #term { position: absolute; inset: 0; padding: 6px 8px 2px; }
+    /* Android WebView will not open the IME for a 0×0 off-screen textarea. */
+    .xterm .xterm-helper-textarea {
+      left: 0 !important;
+      top: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      opacity: 0.01 !important;
+      font-size: 16px !important;
+      z-index: 10 !important;
+      caret-color: transparent !important;
+      pointer-events: none !important;
+    }
   </style>
 </head>
 <body>

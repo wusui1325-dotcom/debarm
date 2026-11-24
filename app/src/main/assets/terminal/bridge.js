@@ -49,6 +49,9 @@
   }
 
   window.addEventListener("resize", doFit);
+  function focusTerm() { try { term.focus(); } catch (e) {} }
+  document.addEventListener("touchstart", focusTerm, {passive: true});
+  document.addEventListener("click", focusTerm);
   term.onData(function (data) {
     if (window.DebArm && window.DebArm.onInput) {
       window.DebArm.onInput(toB64(data));
