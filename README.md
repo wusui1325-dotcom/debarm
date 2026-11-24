@@ -25,6 +25,7 @@
 - **1.1.5**：修好終端全黑、連提示符都沒有。改用原生文字顯示 PTY 輸出；對 bash 有效，但無法正確畫 Codex TUI。
 - **1.1.4**：修好輸入欄按 Enter／「前往」沒有把指令送進 shell。改用原生輸入欄與「送出」按鈕。
 - **1.1.3**：修好「鍵盤能打、終端卻不顯示文字」。1.1.2 能彈出軟鍵盤，但許多輸入法會把字母先當組字，要等到空白或 Enter 才送出。
+- **Codex 專屬版 1.0.15**（另開套件 `com.wusper.debarm.codex`）：游標點到官方桌面或內建 Chrome 的文字欄位時，會自動彈出 Android 軟鍵盤，輸入內容會進到那個 X11／Chrome 視窗（含中文組字）。左上角「選單」裡也可手動開關鍵盤。官方 Chrome／後備 Chromium 的 cookies 與登入狀態寫在工作區（`/workspace/.config/google-chrome` 或 `/workspace/.config/chromium`），殺掉 App 再打開仍會保留。不必刪環境或重下載官方 ChatGPT 套件。不影響通用 DebArm 1.1.8。
 - **Codex 專屬版 1.0.14**（另開套件 `com.wusper.debarm.codex`）：在環境內安裝官方 Google Chrome arm64（約 136 MB，不打進 APK），設為預設瀏覽器，讓官方桌面「Continue to sign in」能開瀏覽器登入；已有環境的人覆蓋後第一次進入會自動安裝，不必重下載官方 ChatGPT 套件。同時把桌面畫面依原長寬比放大鋪滿螢幕（不裁切、不變形）。不影響通用 DebArm 1.1.8。
 - **Codex 專屬版 1.0.13**：修好把尚未登入時的 Electron／D-Bus stderr 誤判成「啟動失敗」。
 - **Codex 專屬版 1.0.12**：改成 App 自己的沉浸式全螢幕，藏掉 noVNC 左側工具列與「Connecting…」蓋層，並依裝置解析度啟動 Xvfb。

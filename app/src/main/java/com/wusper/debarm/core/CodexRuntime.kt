@@ -15,6 +15,11 @@ object CodexRuntime {
         File(paths.workspaceDir, ".config").mkdirs()
         File(paths.workspaceDir, ".cache").mkdirs()
         File(paths.workspaceDir, ".local/share").mkdirs()
+        File(paths.workspaceDir, ".debarm").mkdirs()
+        File(paths.workspaceDir, ".config/google-chrome").mkdirs()
+        File(paths.workspaceDir, ".config/chromium").mkdirs()
+        File(paths.workspaceDir, ".cache/google-chrome").mkdirs()
+        File(paths.workspaceDir, ".cache/chromium").mkdirs()
         val readme = File(paths.workspaceDir, "README.txt")
         if (!readme.exists()) {
             readme.writeText(
@@ -278,6 +283,10 @@ object CodexRuntime {
         dest.parentFile?.mkdirs()
         dest.writeText(START_SCRIPT)
         dest.setExecutable(true, false)
+        val watch = File(paths.rootfsDir, ImeWatchScript.RELATIVE_PATH)
+        watch.parentFile?.mkdirs()
+        watch.writeText(ImeWatchScript.TEXT)
+        watch.setExecutable(true, false)
         if (isBrowserInstalled(paths)) {
             ensureBrowserIntegration(paths)
         }
@@ -342,9 +351,22 @@ export GDK_BACKEND=x11
 export BROWSER=${CodexCatalog.browserWrapperPath}
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
-mkdir -p /tmp/runtime-user /tmp/.X11-unix /workspace /tmp/xdg
+mkdir -p /tmp/runtime-user /tmp/.X11-unix /workspace /tmp/xdg \
+  /workspace/.debarm \
+  /workspace/.config/google-chrome /workspace/.config/chromium \
+  /workspace/.cache/google-chrome /workspace/.cache/chromium
 chmod 700 /tmp/runtime-user 2>/dev/null
 chmod 1777 /tmp/.X11-unix 2>/dev/null
+chmod 700 /workspace/.config/google-chrome /workspace/.config/chromium /workspace/.debarm 2>/dev/null
+
+flush_browser() {
+  pkill -TERM -f "/opt/google/chrome" >/dev/null 2>&1
+  pkill -TERM -f "google-chrome" >/dev/null 2>&1
+  pkill -TERM -f "/usr/lib/chromium" >/dev/null 2>&1
+  pkill -TERM -f "chromium-browser" >/dev/null 2>&1
+  sleep 0.8
+}
+trap flush_browser EXIT
 
 wait_tcp() {
   local port="${'$'}1"
@@ -492,6 +514,11 @@ if ! wait_tcp ${CodexCatalog.vncPort} x11vnc 8; then
 fi
 echo "debarm: display stack ready (Xvfb=:${CodexCatalog.displayNumber} vnc=127.0.0.1:${CodexCatalog.vncPort} novnc=127.0.0.1:${CodexCatalog.displayPort})"
 
+if [ -x ${CodexCatalog.imeWatchPath} ]; then
+  ${CodexCatalog.imeWatchPath} >/tmp/debarm-ime-watch.log 2>&1 &
+  echo "debarm: ime watcher started"
+fi
+
 CHATGPT=""
 for c in /usr/bin/chatgpt /usr/lib/chatgpt/codex-launcher /usr/lib/chatgpt/ChatGPT /usr/lib/chatgpt/chatgpt /opt/ChatGPT/chatgpt /opt/ChatGPT/ChatGPT /opt/chatgpt/chatgpt /usr/share/chatgpt/chatgpt; do
   if [ -e "${'$'}c" ]; then CHATGPT="${'$'}c"; break; fi
@@ -514,6 +541,9 @@ echo "debarm: launching official app ${'$'}CHATGPT"
   --disable-seccomp-filter-sandbox \
   --in-process-gpu \
   --start-maximized \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=${CodexCatalog.chatgptDebugPort} \
+  --force-renderer-accessibility \
   "$@"
 STATUS=${'$'}?
 echo "debarm: chatgpt exited ${'$'}STATUS"
@@ -531,6 +561,17 @@ if [ -z "${'$'}BIN" ]; then
   echo "debarm: no chrome/chromium binary found" >&2
   exit 127
 fi
+DATADIR="${CodexCatalog.chromeUserDataDir}"
+CACHEDIR="${CodexCatalog.chromeCacheDir}"
+DEBUGPORT=${CodexCatalog.chromeDebugPort}
+case "${'$'}BIN" in
+  *chromium*)
+    DATADIR="${CodexCatalog.chromiumUserDataDir}"
+    CACHEDIR="${CodexCatalog.chromiumCacheDir}"
+    ;;
+esac
+mkdir -p "${'$'}DATADIR" "${'$'}CACHEDIR"
+chmod 700 "${'$'}DATADIR" 2>/dev/null
 exec "${'$'}BIN" \
   --no-sandbox \
   --disable-setuid-sandbox \
@@ -540,6 +581,11 @@ exec "${'$'}BIN" \
   --in-process-gpu \
   --ozone-platform=x11 \
   --disable-features=TranslateUI \
+  --user-data-dir="${'$'}DATADIR" \
+  --disk-cache-dir="${'$'}CACHEDIR" \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port="${'$'}DEBUGPORT" \
+  --force-renderer-accessibility \
   "${'$'}@"
 """
 

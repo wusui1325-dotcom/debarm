@@ -12,6 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class NovncBridge(
     private val connectedCallback: () -> Unit,
     private val fullscreenCallback: () -> Unit,
+    private val pointerUpCallback: () -> Unit,
 ) {
     private val main = Handler(Looper.getMainLooper())
     private val connectedOnce = AtomicBoolean(false)
@@ -26,5 +27,10 @@ class NovncBridge(
     @JavascriptInterface
     fun requestFullscreen() {
         main.post { fullscreenCallback() }
+    }
+
+    @JavascriptInterface
+    fun onPointerUp() {
+        main.post { pointerUpCallback() }
     }
 }

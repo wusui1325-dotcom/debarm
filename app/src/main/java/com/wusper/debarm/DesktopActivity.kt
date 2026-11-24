@@ -11,6 +11,8 @@ import android.os.Looper
 import android.util.DisplayMetrics
 import android.view.ViewGroup
 import android.view.WindowManager
+import org.json.JSONObject
+import java.io.File
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
@@ -33,6 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +56,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.wusper.debarm.core.CodexCatalog
 import com.wusper.debarm.core.CodexRuntime
 import com.wusper.debarm.core.DebArmPaths
+import com.wusper.debarm.terminal.DesktopImeView
 import com.wusper.debarm.terminal.DesktopSession
 import com.wusper.debarm.terminal.NovncBridge
 import com.wusper.debarm.ui.Cream
@@ -72,7 +76,11 @@ import com.wusper.debarm.ui.Paper
 class DesktopActivity : ComponentActivity() {
     private var session: DesktopSession? = null
     private var webView: WebView? = null
+    private var imeView: DesktopImeView? = null
+    private lateinit var workspaceDir: File
     private var started = false
+    private var imeForced = false
+    private var imeWanted = false
     private val main = Handler(Looper.getMainLooper())
     private val statusText = mutableStateOf("正在啟動顯示伺服器…")
     private val logText = mutableStateOf("")
@@ -85,7 +93,20 @@ class DesktopActivity : ComponentActivity() {
     private val novncBridge = NovncBridge(
         connectedCallback = { onNovncConnected() },
         fullscreenCallback = { enterImmersive() },
+        pointerUpCallback = { onDesktopPointerUp() },
     )
+
+    private val pollIme = object : Runnable {
+        override fun run() {
+            if (isDestroyed || !connected.value) return
+            applyImeFromFocusFile(fromPointer = false)
+            main.postDelayed(this, 350)
+        }
+    }
+
+    private val afterPointer = Runnable {
+        if (!isDestroyed) applyImeFromFocusFile(fromPointer = true)
+    }
 
     private val pollConnected = object : Runnable {
         override fun run() {
@@ -107,6 +128,11 @@ class DesktopActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         enableEdgeToEdge()
         val paths = DebArmPaths(this)
+        workspaceDir = paths.workspaceDir
+        window.setSoftInputMode(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN or
+                WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED,
+        )
         if (!CodexRuntime.isInstalled(paths)) {
             Toast.makeText(this, "尚未安裝官方桌面套件，請先在首頁準備環境。", Toast.LENGTH_LONG).show()
             finish()
@@ -136,6 +162,8 @@ class DesktopActivity : ComponentActivity() {
                     },
                     onLeave = { finish() },
                     onWebView = { wv -> attachSession(wv, paths, screenW, screenH) },
+                    onImeView = { bindImeView(it) },
+                    onToggleKeyboard = { toggleDesktopIme() },
                 )
             }
         }
@@ -172,6 +200,133 @@ class DesktopActivity : ComponentActivity() {
         menuOpen.value = false
         statusText.value = "畫面已連線 · 官方 ChatGPT 桌面"
         enterImmersive()
+        main.removeCallbacks(pollIme)
+        main.post(pollIme)
+    }
+
+    private fun bindImeView(view: DesktopImeView) {
+        imeView = view
+        view.onText = { sendDesktopText(it) }
+        view.onSpecial = { sendDesktopSpecial(it) }
+        view.onDismiss = {
+            imeForced = false
+            imeWanted = false
+        }
+    }
+
+    private fun onDesktopPointerUp() {
+        main.removeCallbacks(afterPointer)
+        main.postDelayed(afterPointer, 220)
+    }
+
+    private fun readImeFocus(): Boolean? {
+        if (!::workspaceDir.isInitialized) return null
+        val file = File(workspaceDir, ".debarm/ime-focus")
+        if (!file.isFile) return null
+        return try {
+            when (file.readText().trim()) {
+                "1" -> true
+                "0" -> false
+                else -> null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun applyImeFromFocusFile(fromPointer: Boolean) {
+        when (readImeFocus()) {
+            true -> showDesktopIme()
+            false -> {
+                if (imeForced && !fromPointer) return
+                imeForced = false
+                hideDesktopIme()
+            }
+            null -> Unit
+        }
+    }
+
+    private fun showDesktopIme() {
+        imeWanted = true
+        imeView?.showKeyboard()
+    }
+
+    private fun hideDesktopIme() {
+        imeWanted = false
+        imeView?.hideKeyboard()
+    }
+
+    private fun toggleDesktopIme() {
+        menuOpen.value = false
+        if (imeWanted) {
+            imeForced = false
+            hideDesktopIme()
+        } else {
+            imeForced = true
+            showDesktopIme()
+        }
+    }
+
+    private fun sendDesktopText(text: String) {
+        if (text.isEmpty()) return
+        val wv = webView ?: return
+        val payload = JSONObject.quote(text)
+        wv.evaluateJavascript(
+            """
+            (function(){
+              var s = $payload;
+              if (!window.UI || !UI.rfb) return '0';
+              function key(sym, code){
+                try { if (code) UI.rfb.sendKey(sym, code); else UI.rfb.sendKey(sym); }
+                catch (e) { UI.rfb.sendKey(sym); }
+              }
+              for (var i = 0; i < s.length; ) {
+                var c = s.charCodeAt(i);
+                var cp = c;
+                if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+                  var c2 = s.charCodeAt(i + 1);
+                  if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
+                    cp = 0x10000 + ((c - 0xD800) << 10) + (c2 - 0xDC00);
+                    i += 2;
+                  } else { i++; }
+                } else { i++; }
+                if (cp === 10 || cp === 13) { key(0xff0d, 'Enter'); continue; }
+                if (cp === 8 || cp === 127) { key(0xff08, 'Backspace'); continue; }
+                if (cp === 9) { key(0xff09, 'Tab'); continue; }
+                if (cp === 27) { key(0xff1b, 'Escape'); continue; }
+                key(0x01000000 + cp);
+              }
+              return '1';
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
+    private fun sendDesktopSpecial(name: String) {
+        val wv = webView ?: return
+        val payload = JSONObject.quote(name)
+        wv.evaluateJavascript(
+            """
+            (function(){
+              var n = $payload;
+              if (!window.UI || !UI.rfb) return '0';
+              var map = {
+                Enter:[0xff0d,'Enter'], Backspace:[0xff08,'Backspace'],
+                Delete:[0xffff,'Delete'], Tab:[0xff09,'Tab'], Escape:[0xff1b,'Escape'],
+                ArrowUp:[0xff52,'ArrowUp'], ArrowDown:[0xff54,'ArrowDown'],
+                ArrowLeft:[0xff51,'ArrowLeft'], ArrowRight:[0xff53,'ArrowRight'],
+                Home:[0xff50,'Home'], End:[0xff57,'End'],
+                PageUp:[0xff55,'PageUp'], PageDown:[0xff56,'PageDown']
+              };
+              var p = map[n];
+              if (!p) return '0';
+              try { UI.rfb.sendKey(p[0], p[1]); } catch (e) { UI.rfb.sendKey(p[0]); }
+              return '1';
+            })();
+            """.trimIndent(),
+            null,
+        )
     }
 
     /**
@@ -282,6 +437,9 @@ class DesktopActivity : ComponentActivity() {
 
     override fun onDestroy() {
         main.removeCallbacks(pollConnected)
+        main.removeCallbacks(pollIme)
+        main.removeCallbacks(afterPointer)
+        hideDesktopIme()
         session?.close()
         session = null
         webView?.apply {
@@ -376,6 +534,14 @@ class DesktopActivity : ComponentActivity() {
                   }
                 }, true);
               }
+              if (!window.__debarmPtr) {
+                window.__debarmPtr = true;
+                ['mouseup','touchend'].forEach(function(name){
+                  document.addEventListener(name, function(){
+                    try{ if (window.DebArmDesktop) DebArmDesktop.onPointerUp(); }catch(e){}
+                  }, true);
+                });
+              }
               function notify(){
                 try{ if (window.DebArmDesktop) DebArmDesktop.onConnected(); }catch(e){}
               }
@@ -446,6 +612,8 @@ private fun DesktopScreen(
     onOpenTerminal: () -> Unit,
     onLeave: () -> Unit,
     onWebView: (WebView) -> Unit,
+    onImeView: (DesktopImeView) -> Unit,
+    onToggleKeyboard: () -> Unit,
 ) {
     val immersive = connected && !showChrome
     BackHandler(enabled = connected) {
@@ -461,6 +629,14 @@ private fun DesktopScreen(
             .fillMaxSize()
             .background(Ink),
     ) {
+        AndroidView(
+            modifier = Modifier
+                .size(1.dp)
+                .align(Alignment.BottomStart),
+            factory = { ctx ->
+                DesktopImeView(ctx).also { onImeView(it) }
+            },
+        )
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
@@ -546,6 +722,9 @@ private fun DesktopScreen(
                         Text("開啟終端", color = Gold, fontSize = 13.sp)
                     }
                     if (connected) {
+                        TextButton(onClick = onToggleKeyboard) {
+                            Text("鍵盤", color = Gold, fontSize = 13.sp)
+                        }
                         TextButton(onClick = onEnterImmersive) {
                             Text("進入全螢幕", color = Gold, fontSize = 13.sp)
                         }
@@ -603,6 +782,7 @@ private fun DesktopScreen(
                                 .background(Paper.copy(alpha = 0.94f))
                                 .padding(vertical = 4.dp),
                         ) {
+                            MenuRow("鍵盤", onToggleKeyboard)
                             MenuRow("退出全螢幕", onExitImmersive)
                             MenuRow(if (showLog) "隱藏紀錄" else "顯示紀錄", onToggleLog)
                             MenuRow("開啟終端", onOpenTerminal)

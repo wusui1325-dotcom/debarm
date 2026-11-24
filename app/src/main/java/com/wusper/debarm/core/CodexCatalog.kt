@@ -93,4 +93,14 @@ object CodexCatalog {
 
     /** Headroom to download (~136 MB) and unpack (~450 MB) official Chrome. */
     const val browserMinFreeBytes = 1024L * 1024L * 1024L
+
+    /** Persistent Chromium profile (survives App kill and "delete env, keep workspace"). */
+    const val chromeUserDataDir = "/workspace/.config/google-chrome"
+    const val chromiumUserDataDir = "/workspace/.config/chromium"
+    const val chromeCacheDir = "/workspace/.cache/google-chrome"
+    const val chromiumCacheDir = "/workspace/.cache/chromium"
+    const val chromeDebugPort = 9222
+    const val chatgptDebugPort = 9223
+    const val imeWatchPath = "/usr/local/bin/debarm-ime-watch"
+    const val imeFocusPath = "/workspace/.debarm/ime-focus"
 }
