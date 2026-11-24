@@ -6,6 +6,7 @@ import android.util.Base64
 import com.wusper.debarm.core.DebArmPaths
 import com.wusper.debarm.core.Proot
 import com.wusper.debarm.core.Pty
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
@@ -34,17 +35,29 @@ class TerminalSession(
         masterFd = ids[0]
         pid = ids[1]
         thread(name = "debarm-pty-read", isDaemon = true) {
-            val buf = ByteArray(4096)
+            val buf = ByteArray(32 * 1024)
+            val pending = ByteArrayOutputStream(32 * 1024)
+            fun flush() {
+                if (pending.size() == 0) return
+                val b64 = Base64.encodeToString(pending.toByteArray(), Base64.NO_WRAP)
+                pending.reset()
+                main.post { onOutput(b64) }
+            }
             try {
                 while (running.get()) {
                     val n = Pty.nativeRead(masterFd, buf)
                     if (n < 0) break
                     if (n == 0) continue
-                    val b64 = Base64.encodeToString(buf, 0, n, Base64.NO_WRAP)
-                    main.post { onOutput(b64) }
+                    pending.write(buf, 0, n)
+                    // A short read usually means the burst ended (e.g. a prompt).
+                    // Long full buffers are flushed in chunks for apt-like output.
+                    if (n < buf.size || pending.size() >= 16 * 1024) {
+                        flush()
+                    }
                 }
             } catch (_: Exception) {
             } finally {
+                flush()
                 val code = runCatching { Pty.nativeWaitpid(pid, false) }.getOrDefault(-1)
                 main.post { onExit(code) }
                 close()

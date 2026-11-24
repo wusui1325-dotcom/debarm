@@ -92,11 +92,10 @@ export JAVA_HOME=/path/to/jdk-17
 
 建置產物：
 
-- Debug APK：`app/build/outputs/apk/debug/app-debug.apk`
+- 建議側載（已 minify / shrink）：`./gradlew :app:assembleRelease` → `app/build/outputs/apk/release/app-release.apk`
+- Debug（未壓縮程式碼，體積較大）：`./gradlew :app:assembleDebug`
 
-可側載。Debug 簽名使用本機自動產生的 Android debug keystore，**本倉不包含任何簽名密鑰**。
-
-未簽名的 release 可用 `./gradlew :app:assembleRelease`（若簽章設定為空，產出可能是 unsigned）。請自行用你的金鑰簽名；不要使用其他專案的金鑰。
+以本機 Android debug keystore 簽名，方便側載。**本倉不包含任何簽名密鑰**。請不要使用其他專案的金鑰。從 1.1.0 起已拿掉巨大的 Material Icons Extended 庫與桌面版 zstd JNI，並開啟 R8。
 
 重新抓取 PRoot 預先編譯檔（可選）：
 

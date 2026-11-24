@@ -1,7 +1,10 @@
 package com.wusper.debarm.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,16 +19,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,6 +56,8 @@ import com.wusper.debarm.core.DebPackage
 import com.wusper.debarm.core.EnvUiState
 import com.wusper.debarm.core.EnvironmentController
 
+private val CardShape = RoundedCornerShape(18.dp)
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MainScreen(
@@ -82,67 +84,104 @@ fun MainScreen(
             .imePadding()
             .padding(horizontal = 20.dp),
     ) {
-        Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.Bottom) {
+        Spacer(Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("DebArm", style = MaterialTheme.typography.headlineLarge, color = Cream)
-                Text("在 Android 上原生執行 arm64 .deb", style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(2.dp))
+                Text("原生執行 arm64 .deb", style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = onRefresh, enabled = !busy) {
-                Icon(Icons.Outlined.Refresh, contentDescription = "重新整理", tint = Muted)
+            IconButton(
+                onClick = onRefresh,
+                enabled = !busy,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(Paper),
+            ) {
+                Icon(DebArmIcons.Refresh, contentDescription = "重新整理", tint = Gold)
             }
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(18.dp))
 
         StatusCard(state)
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             when (state.phase) {
                 EnvUiState.Phase.NeedSetup, EnvUiState.Phase.Error -> {
-                    Button(onClick = onInstallEnv, colors = goldButton()) {
+                    Button(
+                        onClick = onInstallEnv,
+                        colors = goldButton(),
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                    ) {
                         Text("安裝 Debian 環境")
                     }
                 }
                 EnvUiState.Phase.Downloading, EnvUiState.Phase.Extracting, EnvUiState.Phase.Configuring -> {
-                    OutlinedButton(onClick = onCancel) { Text("取消") }
+                    OutlinedButton(
+                        onClick = onCancel,
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
+                    ) { Text("取消") }
                 }
                 else -> {}
             }
             FilledTonalButton(
                 onClick = onOpenTerminal,
                 enabled = ready,
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = PaperHigh,
+                    contentColor = Cream,
+                    disabledContainerColor = Paper,
+                    disabledContentColor = Muted,
+                ),
             ) {
-                Icon(Icons.Outlined.Terminal, contentDescription = null)
+                Icon(DebArmIcons.Terminal, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("開啟終端")
             }
             FilledTonalButton(
                 onClick = onInstallDeb,
                 enabled = ready && !busy,
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = PaperHigh,
+                    contentColor = Cream,
+                    disabledContainerColor = Paper,
+                    disabledContentColor = Muted,
+                ),
             ) {
-                Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                Icon(DebArmIcons.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("安裝 .deb")
             }
         }
 
-        AnimatedVisibility(visible = !state.error.isNullOrBlank()) {
+        AnimatedVisibility(
+            visible = !state.error.isNullOrBlank(),
+            enter = fadeIn(),
+            exit = fadeOut(),
+        ) {
             ErrorCard(state.error.orEmpty(), onDismissError)
         }
 
         if (ready) {
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(22.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("已安裝套件", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 TextButton(
                     onClick = { confirmDelete = true },
                     enabled = !busy,
                 ) {
-                    Icon(Icons.Outlined.Delete, contentDescription = null, tint = Coral)
+                    Icon(DebArmIcons.Delete, contentDescription = null, tint = Coral, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("刪除環境", color = Coral)
                 }
@@ -153,8 +192,10 @@ fun MainScreen(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 placeholder = { Text("搜尋套件名稱") },
+                shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Gold,
+                    unfocusedBorderColor = Hairline,
                     cursorColor = Gold,
                 ),
             )
@@ -169,19 +210,20 @@ fun MainScreen(
                 else "找到 ${visible.size} 個套件",
                 style = MaterialTheme.typography.bodySmall,
             )
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(visible, key = { it.name }) { pkg ->
                     PackageRow(pkg)
                 }
                 if (state.log.isNotBlank()) {
                     item {
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(8.dp))
                         Text("紀錄", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(6.dp))
                         Text(
                             state.log.takeLast(4000),
                             style = MaterialTheme.typography.bodySmall,
@@ -192,7 +234,7 @@ fun MainScreen(
                 }
             }
         } else {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(20.dp))
             if (state.log.isNotBlank()) {
                 Text(
                     state.log.takeLast(4000),
@@ -219,6 +261,7 @@ fun MainScreen(
             dismissButton = {
                 TextButton(onClick = { confirmDelete = false }) { Text("取消") }
             },
+            containerColor = Paper,
         )
     }
 }
@@ -227,41 +270,56 @@ fun MainScreen(
 private fun StatusCard(state: EnvUiState) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Paper),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth(),
+        shape = CardShape,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Hairline, CardShape),
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(statusTitle(state.phase), style = MaterialTheme.typography.titleMedium, color = Gold)
-            Spacer(Modifier.height(4.dp))
+        Column(Modifier.padding(18.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                StatusDot(state.phase)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    statusTitle(state.phase),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Gold,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
             Text(state.message, style = MaterialTheme.typography.bodyMedium)
             if (state.debianLabel != null) {
                 Spacer(Modifier.height(6.dp))
                 Text(state.debianLabel, style = MaterialTheme.typography.bodySmall)
             }
+            val used = if (state.diskUsedBytes > 0) EnvironmentController.formatBytes(state.diskUsedBytes) else "計算中"
             Text(
-                "已用 ${EnvironmentController.formatBytes(state.diskUsedBytes)} · 剩餘 ${EnvironmentController.formatBytes(state.diskFreeBytes)}",
+                "已用 $used · 剩餘 ${EnvironmentController.formatBytes(state.diskFreeBytes)}",
                 style = MaterialTheme.typography.bodySmall,
             )
             if (state.phase == EnvUiState.Phase.Downloading) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
                 LinearProgressIndicator(
                     progress = { state.progressFraction },
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(4.dp)
                         .clip(RoundedCornerShape(4.dp)),
                     color = Gold,
                     trackColor = PaperHigh,
                 )
             } else if (state.isBusy && state.phase != EnvUiState.Phase.Checking) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(12.dp))
                 LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(4.dp)),
                     color = Gold,
                     trackColor = PaperHigh,
                 )
             }
             if (state.lastInstalled != null && state.phase == EnvUiState.Phase.Ready) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 Text("剛剛裝好：${state.lastInstalled}", color = Moss, style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -269,12 +327,30 @@ private fun StatusCard(state: EnvUiState) {
 }
 
 @Composable
+private fun StatusDot(phase: EnvUiState.Phase) {
+    val color = when (phase) {
+        EnvUiState.Phase.Ready -> Moss
+        EnvUiState.Phase.Error -> Coral
+        EnvUiState.Phase.NeedSetup, EnvUiState.Phase.Checking -> GoldDim
+        else -> Gold
+    }
+    Box(
+        Modifier
+            .size(8.dp)
+            .clip(CircleShape)
+            .background(color),
+    )
+}
+
+@Composable
 private fun ErrorCard(message: String, onDismiss: () -> Unit) {
     Spacer(Modifier.height(12.dp))
     Card(
         colors = CardDefaults.cardColors(containerColor = PaperHigh),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth(),
+        shape = CardShape,
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, Coral.copy(alpha = 0.35f), CardShape),
     ) {
         Column(Modifier.padding(16.dp)) {
             Text("出錯了", style = MaterialTheme.typography.titleMedium, color = Coral)
@@ -290,9 +366,10 @@ private fun PackageRow(pkg: DebPackage) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(14.dp))
             .background(Paper)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .border(1.dp, Hairline, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -301,8 +378,12 @@ private fun PackageRow(pkg: DebPackage) {
         }
         Text(
             if (pkg.manual) "手動" else "依賴",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall,
             color = if (pkg.manual) Gold else Muted,
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (pkg.manual) Gold.copy(alpha = 0.12f) else PaperHigh)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
         )
     }
 }
@@ -311,14 +392,35 @@ private fun PackageRow(pkg: DebPackage) {
 private fun HelpCopy(modifier: Modifier = Modifier) {
     Column(modifier) {
         Text("怎麼用", style = MaterialTheme.typography.titleMedium)
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(12.dp))
+        HelpStep("1", "安裝 Debian 環境（只需一次，不需 root）")
+        HelpStep("2", "用「安裝 .deb」選檔，或把套件拖進這個畫面")
+        HelpStep("3", "開終端執行剛裝好的指令，例如 hello、python3")
+        Spacer(Modifier.height(14.dp))
         Text(
-            "1. 先安裝 Debian 環境（只需一次，不需 root）。\n" +
-                "2. 用「安裝 .deb」選檔，或把套件拖進這個畫面（平板特別方便）。\n" +
-                "3. 開終端執行剛裝好的指令，例如 hello、ffmpeg、python3。\n\n" +
-                "只接受 arm64 或 Architecture: all 的套件，不會模擬 x86。第一版以命令列程式為主，圖形介面的 .deb 尚不支援。",
-            style = MaterialTheme.typography.bodyMedium,
+            "只接受 arm64 或 Architecture: all 的套件，不會模擬 x86。第一版以命令列程式為主，圖形介面的 .deb 尚不支援。",
+            style = MaterialTheme.typography.bodySmall,
         )
+    }
+}
+
+@Composable
+private fun HelpStep(n: String, text: String) {
+    Row(
+        Modifier.padding(bottom = 10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            Modifier
+                .size(24.dp)
+                .clip(CircleShape)
+                .background(PaperHigh),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(n, style = MaterialTheme.typography.labelSmall, color = Gold)
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 1.dp))
     }
 }
 

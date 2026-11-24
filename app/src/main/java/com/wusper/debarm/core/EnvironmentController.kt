@@ -95,8 +95,8 @@ class EnvironmentController(private val app: Application) {
 
     private suspend fun refreshNow() {
         paths.ensureWorkDirs()
-        val used = dirSize(paths.rootfsDir)
         val free = freeBytes()
+        val used = _state.value.diskUsedBytes
         if (!Arch.isArm64Device()) {
             _state.update {
                 it.copy(
@@ -136,6 +136,7 @@ class EnvironmentController(private val app: Application) {
                 )
             }
         }
+        updateDiskAsync()
     }
 
     private fun isReady(): Boolean {
@@ -366,11 +367,11 @@ class EnvironmentController(private val app: Application) {
                     message = "已安裝 ${control.pkg} ${control.version}",
                     lastInstalled = control.pkg,
                     packages = pkgs,
-                    diskUsedBytes = dirSize(paths.rootfsDir),
                     diskFreeBytes = freeBytes(),
                     debianLabel = readDebianLabel(),
                 )
             }
+            updateDiskAsync()
         } catch (e: Exception) {
             _state.update {
                 it.copy(
@@ -415,6 +416,14 @@ class EnvironmentController(private val app: Application) {
         StatFs(paths.filesDir.absolutePath).availableBytes
     } catch (_: Exception) {
         0L
+    }
+
+    private fun updateDiskAsync() {
+        scope.launch {
+            val used = dirSize(paths.rootfsDir)
+            val free = freeBytes()
+            _state.update { it.copy(diskUsedBytes = used, diskFreeBytes = free) }
+        }
     }
 
     private fun dirSize(dir: File): Long {

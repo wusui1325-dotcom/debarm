@@ -4,7 +4,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
-import org.apache.commons.compress.compressors.zstandard.ZstdCompressorInputStream
+import io.airlift.compress.zstd.ZstdInputStream
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
@@ -62,7 +62,7 @@ object DebParser {
             name.endsWith(".xz") -> XZCompressorInputStream(raw)
             name.endsWith(".gz") || name.endsWith(".gzip") -> GzipCompressorInputStream(raw)
             name.endsWith(".bz2") -> BZip2CompressorInputStream(raw)
-            name.endsWith(".zst") || name.endsWith(".zstd") -> ZstdCompressorInputStream(raw)
+            name.endsWith(".zst") || name.endsWith(".zstd") -> ZstdInputStream(raw)
             else -> raw
         }
         unpacked.use { input ->
