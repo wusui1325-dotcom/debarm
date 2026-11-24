@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +57,13 @@ fun CodexScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     val ready = state.phase == EnvUiState.Phase.Ready && state.codexReady
     val busy = state.isBusy
+    val browserReady = state.browserReady
+    // Cover-install of 1.0.14: if the official desktop is already there,
+    // automatically install the built-in browser without re-downloading
+    // the 464 MB chatgpt deb.
+    LaunchedEffect(ready, browserReady, busy) {
+        if (ready && !browserReady && !busy) onPrepare()
+    }
 
     Column(
         modifier = modifier
@@ -90,6 +98,15 @@ fun CodexScreen(
                         if (state.codexReady) " · 已就緒" else " · 尚未安裝",
                     color = if (state.codexReady) Moss else GoldDim,
                     style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "內建瀏覽器：" + (
+                        state.browserLabel
+                            ?: if (state.codexReady) "尚未安裝（首次約 ${EnvironmentController.formatBytes(CodexCatalog.chromeBytes)}，請保持 App 在前景）"
+                            else "將在準備環境時一併安裝"
+                    ),
+                    color = if (state.browserReady) Moss else GoldDim,
+                    style = MaterialTheme.typography.bodySmall,
                 )
                 val used = if (state.diskUsedBytes > 0) {
                     "已用 ${EnvironmentController.formatBytes(state.diskUsedBytes)}"
@@ -158,7 +175,12 @@ fun CodexScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "「啟動官方桌面」會在 PRoot 裡開顯示器，再把畫面傳到本機視窗。這是軟體繪製的 X11，可能較慢；第一次進 App 需要用你的 OpenAI／ChatGPT 帳號登入。終端僅作後援，不再預設啟動命令列。",
+                    "登入官方桌面（Continue to sign in）需要環境內的瀏覽器。本版會安裝官方 Google Chrome arm64（約 ${EnvironmentController.formatBytes(CodexCatalog.chromeBytes)}，安裝後約 ${EnvironmentController.formatBytes(CodexCatalog.chromeInstalledSizeKb * 1024)}），並設為預設瀏覽器。不會把 Chrome 打進 APK，也不會重下載官方 ChatGPT 套件。已有環境的人，覆蓋安裝後第一次進入會自動下載並安裝，請保持 App 在前景並確認網路穩定。若官方 Chrome 無法在此環境啟動，會改用 Debian 的 Chromium。",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "「啟動官方桌面」會在 PRoot 裡開顯示器，再把畫面按原比例放大到鋪滿螢幕。這是軟體繪製的 X11，可能較慢；第一次進 App 需要用你的 OpenAI／ChatGPT 帳號登入（會開內建瀏覽器）。終端僅作後援，不再預設啟動命令列。",
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -167,12 +189,12 @@ fun CodexScreen(
 
         if (ready) {
             Button(
-                onClick = onLaunch,
+                onClick = { if (browserReady) onLaunch() else onPrepare() },
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth().height(54.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Ink),
             ) {
-                Text("啟動官方桌面")
+                Text(if (browserReady) "啟動官方桌面" else "先安裝內建 Chrome")
             }
             OutlinedButton(
                 onClick = onLaunchTerminal,

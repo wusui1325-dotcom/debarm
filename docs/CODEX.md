@@ -32,7 +32,7 @@
 
 Android 端要等 **5900 與 6080 都在聽**、且 `vnc.html` 可取用後，才用 WebView 打開 `http://127.0.0.1:6080/vnc.html?autoconnect=true&reconnect=true&encrypt=0&host=127.0.0.1&port=6080&path=websockify`。因為 PRoot 與 App 共用網路命名空間，guest 聽的本機埠就是裝置上的本機埠。連線過程由 App 自己顯示簡短狀態，並注入樣式藏掉 noVNC 的「Connecting…」蓋層與左側工具列。官方 ChatGPT／Electron 在 PRoot 裡尚未登入時會寫出 D-Bus UPower、remote control authorization、Workspace routing、HTTP 432 等 stderr，這些只進紀錄，不會當成啟動失敗或擋住登入頁。連上後進入 App 沉浸式全螢幕（WebView 鋪滿，不呼叫瀏覽器 Fullscreen API）；左上角「選單」可退出全螢幕、看紀錄或開終端。Xvfb 解析度依裝置螢幕計算（最長邊最多 1920），openbox 會最大化官方視窗。啟動過程的狀態仍會寫進紀錄。
 
-這是**軟體繪製的 X11**，不是裝置原生視窗，可能較慢或偶有閃爍。第一次進入官方 App 需要用你自己的 OpenAI／ChatGPT 帳號登入。官方程式若無法在 PRoot 裡活下來，視窗會停在紀錄頁，可改用「開啟終端（後援）」排查。終端是工作區登入 shell，**不再預設啟動 musl CLI**。
+這是**軟體繪製的 X11**，不是裝置原生視窗，可能較慢或偶有閃爍。第一次進入官方 App 需要用你自己的 OpenAI／ChatGPT 帳號登入。登入（Continue to sign in）會透過 `xdg-open`／`BROWSER` 開啟環境內的瀏覽器。本版會在 rootfs 裡安裝**官方 Google Chrome arm64**（`google-chrome-stable` 158.0.8127.88-1，下載約 136 MB，安裝後約 450 MB，不打進 APK），以 wrapper 加上 `--no-sandbox`、`--disable-dev-shm-usage` 等旗標，並設為預設瀏覽器（避免 chatgpt.desktop 把 http(s) 搶走）。若官方 Chrome 無法安裝，會改用 Debian 的 `chromium`。已裝好官方桌面的環境，覆蓋安裝後第一次進入或點準備時會自動下載安裝，不必刪環境或重下載官方 ChatGPT 套件；請保持 App 在前景。畫面依裝置長寬比計算 Xvfb 解析度，並以等比縮放（contain，不裁切、不變形）鋪滿全螢幕。官方程式若無法在 PRoot 裡活下來，視窗會停在紀錄頁，可改用「開啟終端（後援）」排查。終端是工作區登入 shell，**不再預設啟動 musl CLI**。
 
 ## 工作區與權限
 

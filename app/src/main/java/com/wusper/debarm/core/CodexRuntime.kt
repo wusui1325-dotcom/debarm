@@ -168,6 +168,65 @@ object CodexRuntime {
         return false
     }
 
+    fun browserBinary(paths: DebArmPaths): File? {
+        val known = listOf(
+            "opt/google/chrome/chrome",
+            "usr/bin/google-chrome-stable",
+            "usr/bin/google-chrome",
+            "usr/lib/chromium/chromium",
+            "usr/bin/chromium",
+            "usr/bin/chromium-browser",
+        )
+        for (rel in known) {
+            resolveGuestFile(paths.rootfsDir, rel)?.let { return it }
+        }
+        return null
+    }
+
+    fun isBrowserInstalled(paths: DebArmPaths): Boolean = browserBinary(paths) != null
+
+    /**
+     * Wrapper + default-browser registrations so official ChatGPT's
+     * "Continue to sign in" (xdg-open / BROWSER / http(s) mime) opens
+     * a real browser instead of looping back to chatgpt.desktop
+     * (which also claims x-scheme-handler/http and https).
+     */
+    fun ensureBrowserIntegration(paths: DebArmPaths) {
+        val bin = File(paths.rootfsDir, "usr/local/bin/debarm-browser")
+        bin.parentFile?.mkdirs()
+        bin.writeText(BROWSER_WRAPPER)
+        bin.setExecutable(true, false)
+
+        val desktop = File(paths.rootfsDir, "usr/share/applications/debarm-browser.desktop")
+        desktop.parentFile?.mkdirs()
+        desktop.writeText(BROWSER_DESKTOP)
+
+        val mime = """
+            [Default Applications]
+            text/html=debarm-browser.desktop
+            text/xml=debarm-browser.desktop
+            application/xhtml+xml=debarm-browser.desktop
+            x-scheme-handler/http=debarm-browser.desktop
+            x-scheme-handler/https=debarm-browser.desktop
+            x-scheme-handler/about=debarm-browser.desktop
+            x-scheme-handler/unknown=debarm-browser.desktop
+            x-scheme-handler/codex=chatgpt.desktop
+
+            [Added Associations]
+            text/html=debarm-browser.desktop;
+            x-scheme-handler/http=debarm-browser.desktop;
+            x-scheme-handler/https=debarm-browser.desktop;
+        """.trimIndent() + "\n"
+        for (rel in listOf("etc/xdg/mimeapps.list", "usr/share/applications/mimeapps.list")) {
+            val f = File(paths.rootfsDir, rel)
+            f.parentFile?.mkdirs()
+            f.writeText(mime)
+        }
+        val userMime = File(paths.workspaceDir, ".config/mimeapps.list")
+        userMime.parentFile?.mkdirs()
+        userMime.writeText(mime)
+    }
+
     fun storageBinds(paths: DebArmPaths): List<Pair<String, String>> {
         val binds = mutableListOf(
             paths.workspaceDir.absolutePath to "/workspace",
@@ -197,6 +256,7 @@ object CodexRuntime {
         "XDG_CACHE_HOME" to "/workspace/.cache",
         "XDG_RUNTIME_DIR" to "/tmp/runtime-user",
         "DEBIAN_FRONTEND" to "noninteractive",
+        "BROWSER" to CodexCatalog.browserWrapperPath,
     )
 
     fun displayEnv(
@@ -218,6 +278,9 @@ object CodexRuntime {
         dest.parentFile?.mkdirs()
         dest.writeText(START_SCRIPT)
         dest.setExecutable(true, false)
+        if (isBrowserInstalled(paths)) {
+            ensureBrowserIntegration(paths)
+        }
     }
 
     /** Workspace login shell — fallback / troubleshooting, not the musl CLI. */
@@ -276,6 +339,7 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export GALLIUM_DRIVER=llvmpipe
 export ELECTRON_OZONE_PLATFORM_HINT=x11
 export GDK_BACKEND=x11
+export BROWSER=${CodexCatalog.browserWrapperPath}
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 mkdir -p /tmp/runtime-user /tmp/.X11-unix /workspace /tmp/xdg
@@ -454,5 +518,40 @@ echo "debarm: launching official app ${'$'}CHATGPT"
 STATUS=${'$'}?
 echo "debarm: chatgpt exited ${'$'}STATUS"
 exit ${'$'}STATUS
+"""
+
+    private val BROWSER_WRAPPER = """#!/bin/bash
+# PRoot / Android has no working chrome-sandbox (setuid) and tiny /dev/shm.
+set +e
+BIN=""
+for c in /usr/bin/google-chrome-stable /usr/bin/google-chrome /opt/google/chrome/chrome /usr/bin/chromium /usr/bin/chromium-browser /usr/lib/chromium/chromium; do
+  if [ -x "${'$'}c" ]; then BIN="${'$'}c"; break; fi
+done
+if [ -z "${'$'}BIN" ]; then
+  echo "debarm: no chrome/chromium binary found" >&2
+  exit 127
+fi
+exec "${'$'}BIN" \
+  --no-sandbox \
+  --disable-setuid-sandbox \
+  --disable-seccomp-filter-sandbox \
+  --disable-dev-shm-usage \
+  --disable-gpu \
+  --in-process-gpu \
+  --ozone-platform=x11 \
+  --disable-features=TranslateUI \
+  "${'$'}@"
+"""
+
+    private val BROWSER_DESKTOP = """[Desktop Entry]
+Name=Chrome
+GenericName=Web Browser
+Comment=DebArm built-in browser
+Exec=/usr/local/bin/debarm-browser %U
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/about;x-scheme-handler/unknown;
 """
 }

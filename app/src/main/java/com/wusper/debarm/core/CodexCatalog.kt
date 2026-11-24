@@ -69,4 +69,28 @@ object CodexCatalog {
         "mesa-vulkan-drivers",
         "xdg-utils",
     )
+
+    /**
+     * Official Google Chrome arm64 Linux .deb, re-verified 2026-11-25
+     * against https://dl.google.com/linux/chrome/deb/dists/stable/main/binary-arm64/Packages.
+     * Not bundled in the APK; first launch of an existing environment
+     * downloads and installs it into the rootfs.
+     */
+    const val chromePackage = "google-chrome-stable"
+    const val chromeVersion = "158.0.8127.88-1"
+    const val chromeAssetName = "google-chrome-stable_158.0.8127.88-1_arm64.deb"
+    const val chromeSha256 = "6c7439981240ba7fb05c3534b4aa3ea3104ce388f300c2bbdf66884f8c554098"
+    const val chromeBytes = 142_083_448L
+    const val chromeInstalledSizeKb = 459_175L
+    const val chromePrimaryUrl =
+        "https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable/google-chrome-stable_158.0.8127.88-1_arm64.deb"
+    const val chromeLatestUrl =
+        "https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb"
+    val chromeUrls: List<String> get() = listOf(chromePrimaryUrl, chromeLatestUrl)
+
+    const val browserWrapperPath = "/usr/local/bin/debarm-browser"
+    const val browserDesktopPath = "/usr/share/applications/debarm-browser.desktop"
+
+    /** Headroom to download (~136 MB) and unpack (~450 MB) official Chrome. */
+    const val browserMinFreeBytes = 1024L * 1024L * 1024L
 }

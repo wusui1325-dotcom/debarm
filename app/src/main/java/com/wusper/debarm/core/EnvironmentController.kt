@@ -34,6 +34,8 @@ data class EnvUiState(
     val codexReady: Boolean = false,
     val codexPackaged: Boolean = false,
     val codexVersion: String? = null,
+    val browserReady: Boolean = false,
+    val browserLabel: String? = null,
 ) {
     enum class Phase {
         Checking, NeedSetup, Downloading, Extracting, Configuring,
@@ -125,6 +127,17 @@ class EnvironmentController(private val app: Application) {
         val codexReady = CodexRuntime.isInstalled(paths)
         val codexPackaged = CodexRuntime.isInstalled(paths)
         val codexVersion = if (codexReady) CodexCatalog.version else null
+        val browserReady = CodexRuntime.isBrowserInstalled(paths)
+        val browserLabel = if (browserReady) {
+            val rel = CodexRuntime.browserBinary(paths)
+                ?.toRelativeString(paths.rootfsDir)
+                .orEmpty()
+            if ("google-chrome" in rel || "opt/google/chrome" in rel) {
+                "官方 Google Chrome ${CodexCatalog.chromeVersion}"
+            } else {
+                "Debian Chromium（官方 Chrome 後備）"
+            }
+        } else null
         if (isReady()) {
             val label = readDebianLabel()
             val pkgs = runCatching { PackageQuery.list(paths) }.getOrDefault(emptyList())
@@ -140,6 +153,8 @@ class EnvironmentController(private val app: Application) {
                     codexReady = codexReady,
                     codexPackaged = codexPackaged,
                     codexVersion = codexVersion,
+                    browserReady = browserReady,
+                    browserLabel = browserLabel,
                 )
             }
         } else {
@@ -155,6 +170,8 @@ class EnvironmentController(private val app: Application) {
                     codexReady = false,
                     codexPackaged = false,
                     codexVersion = null,
+                    browserReady = false,
+                    browserLabel = null,
                 )
             }
         }
@@ -352,13 +369,13 @@ class EnvironmentController(private val app: Application) {
             if (!Arch.isArm64Device()) {
                 throw IOException("這支 App 只在 arm64-v8a 裝置上原生執行 aarch64 二進制，不模擬 x86。\n${Arch.deviceSummary()}")
             }
-            if (freeBytes() < CodexCatalog.minFreeBytes) {
-                throw IOException(
-                    "可用空間不足 ${formatBytes(CodexCatalog.minFreeBytes)}（Debian、顯示伺服器與官方桌面套件約需 4 GB，套件下載約 464 MB、解壓後約 1.5 GB）。目前剩餘 ${formatBytes(freeBytes())}。",
-                )
-            }
             Proot.assertRunnable(paths)
             if (!isReady()) {
+                if (freeBytes() < CodexCatalog.minFreeBytes) {
+                    throw IOException(
+                        "可用空間不足 ${formatBytes(CodexCatalog.minFreeBytes)}（Debian、顯示伺服器與官方桌面套件約需 4 GB，套件下載約 464 MB、解壓後約 1.5 GB）。目前剩餘 ${formatBytes(freeBytes())}。",
+                    )
+                }
                 var lastError: Exception? = null
                 for (image in RootfsCatalog.all) {
                     try {
@@ -377,7 +394,18 @@ class EnvironmentController(private val app: Application) {
             }
             CodexRuntime.ensureGuestUser(paths)
             if (!CodexRuntime.isInstalled(paths)) {
+                if (freeBytes() < CodexCatalog.minFreeBytes) {
+                    throw IOException(
+                        "可用空間不足 ${formatBytes(CodexCatalog.minFreeBytes)}（官方桌面套件下載約 464 MB、解壓後約 1.5 GB，加顯示伺服器請預留約 4 GB）。目前剩餘 ${formatBytes(freeBytes())}。",
+                    )
+                }
                 installOfficialCodex()
+            }
+            if (!CodexRuntime.isBrowserInstalled(paths)) {
+                installBrowser()
+            } else {
+                CodexRuntime.ensureBrowserIntegration(paths)
+                appendLog("已偵測到內建瀏覽器（${CodexRuntime.browserBinary(paths)?.toRelativeString(paths.rootfsDir)}），已接上預設瀏覽器。")
             }
             refreshNow()
         } catch (e: Exception) {
@@ -517,6 +545,128 @@ class EnvironmentController(private val app: Application) {
         }
         CodexRuntime.rememberInstalled(paths)
         appendLog("已安裝官方桌面套件 ${CodexCatalog.packageName} ${CodexCatalog.version}（執行檔 ${binary.relativeTo(paths.rootfsDir)}）")
+    }
+
+    /**
+     * Install official Google Chrome arm64 into the existing rootfs.
+     * Does not touch or re-download the official chatgpt .deb.
+     * Falls back to Debian chromium if the official Chrome package cannot be set up.
+     */
+    private fun installBrowser() {
+        if (CodexRuntime.isBrowserInstalled(paths)) {
+            CodexRuntime.ensureBrowserIntegration(paths)
+            return
+        }
+        if (freeBytes() < CodexCatalog.browserMinFreeBytes) {
+            throw IOException(
+                "安裝內建 Chrome 需要約 ${formatBytes(CodexCatalog.browserMinFreeBytes)} 可用空間" +
+                    "（下載約 ${formatBytes(CodexCatalog.chromeBytes)}，安裝後約 ${formatBytes(CodexCatalog.chromeInstalledSizeKb * 1024)}）。" +
+                    "目前剩餘 ${formatBytes(freeBytes())}。",
+            )
+        }
+        _state.update {
+            it.copy(
+                phase = EnvUiState.Phase.Downloading,
+                message = "正在下載內建官方 Chrome（約 ${formatBytes(CodexCatalog.chromeBytes)}）。請保持 App 在前景，不必重下載官方 ChatGPT 套件。",
+                error = null,
+                downloadRead = 0,
+                downloadTotal = CodexCatalog.chromeBytes,
+            )
+        }
+        appendLog("安裝官方 Google Chrome ${CodexCatalog.chromeVersion}（${CodexCatalog.chromeAssetName}）")
+
+        val haveCache = paths.chromeDownloadFile.exists() &&
+            runCatching { Sha256.of(paths.chromeDownloadFile) }.getOrNull()
+                ?.let { Sha256.equal(it, CodexCatalog.chromeSha256) } == true
+        if (haveCache) {
+            appendLog("已有校驗相符的 Chrome 快取，略過下載。")
+        } else {
+            val used = Downloader.downloadWithFallback(
+                urls = CodexCatalog.chromeUrls,
+                dest = paths.chromeDownloadFile,
+                expectedSha256 = CodexCatalog.chromeSha256,
+                expectedBytes = CodexCatalog.chromeBytes,
+                cancelled = ::isCancelled,
+            ) { read, total ->
+                _state.update {
+                    it.copy(
+                        downloadRead = read,
+                        downloadTotal = if (total > 0) total else it.downloadTotal,
+                        message = "正在下載內建官方 Chrome（${formatBytes(read)}" +
+                            if (total > 0) " / ${formatBytes(total)}）。請保持 App 在前景。" else "）。請保持 App 在前景。",
+                    )
+                }
+            }
+            appendLog("已由 $used 完成 Chrome 下載並通過 SHA-256 校驗。")
+        }
+        if (isCancelled()) throw IOException("已取消")
+
+        _state.update {
+            it.copy(
+                phase = EnvUiState.Phase.InstallingDeb,
+                message = "正在安裝官方 Chrome 到 Debian 環境（安裝後約 ${formatBytes(CodexCatalog.chromeInstalledSizeKb * 1024)}）…",
+            )
+        }
+        val dpkg = HostProcess.run(
+            argv = Proot.argv(
+                paths,
+                listOf(
+                    "apt-get update && " +
+                        "apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold " +
+                        "ca-certificates fonts-liberation wget xdg-utils libvulkan1 libgtk-3-0t64 libnss3 libasound2t64 || true; " +
+                        "dpkg -i '/host-cache/${CodexCatalog.chromeAssetName}' || " +
+                        "apt-get install -f -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold",
+                ),
+                extraBinds = listOf(paths.cacheDir.absolutePath to "/host-cache"),
+            ),
+            env = Proot.hostEnv(paths),
+            timeoutMs = 25 * 60 * 1000L,
+            cancelled = ::isCancelled,
+            onChunk = { appendLog(it) },
+        )
+        appendLog(dpkg.output.takeLast(2000))
+        if (isCancelled()) throw IOException("已取消")
+
+        if (!CodexRuntime.isBrowserInstalled(paths)) {
+            appendLog("官方 Chrome 未能就緒，改用 Debian 的 chromium（不是 snap）。")
+            _state.update { it.copy(message = "官方 Chrome 未能就緒，改用 Debian Chromium…") }
+            val fallback = HostProcess.run(
+                argv = Proot.argv(
+                    paths,
+                    listOf(
+                        "apt-get update && apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold chromium xdg-utils fonts-liberation fonts-dejavu-core",
+                    ),
+                ),
+                env = Proot.hostEnv(paths),
+                timeoutMs = 25 * 60 * 1000L,
+                cancelled = ::isCancelled,
+                onChunk = { appendLog(it) },
+            )
+            appendLog(fallback.output.takeLast(2000))
+            if (!CodexRuntime.isBrowserInstalled(paths)) {
+                throw IOException("安裝內建瀏覽器失敗（官方 Chrome exit ${dpkg.exitCode}，Chromium exit ${fallback.exitCode}）。請看下方紀錄，保持網路穩定後重試。不必刪環境或重下載官方 ChatGPT 套件。")
+            }
+        }
+
+        CodexRuntime.ensureBrowserIntegration(paths)
+        val alt = HostProcess.run(
+            argv = Proot.argv(
+                paths,
+                listOf(
+                    "update-alternatives --install /usr/bin/x-www-browser x-www-browser ${CodexCatalog.browserWrapperPath} 200 && " +
+                        "update-alternatives --set x-www-browser ${CodexCatalog.browserWrapperPath} && " +
+                        "update-alternatives --install /usr/bin/gnome-www-browser gnome-www-browser ${CodexCatalog.browserWrapperPath} 200 || true; " +
+                        "rm -f /etc/apt/sources.list.d/google-chrome.list /etc/cron.daily/google-chrome || true",
+                ),
+            ),
+            env = Proot.hostEnv(paths),
+            timeoutMs = 60_000L,
+            cancelled = ::isCancelled,
+            onChunk = { appendLog(it) },
+        )
+        appendLog(alt.output.takeLast(800))
+        val rel = CodexRuntime.browserBinary(paths)?.toRelativeString(paths.rootfsDir)
+        appendLog("內建瀏覽器已就緒（$rel），已設為 xdg-open／BROWSER 預設。")
     }
 
     private suspend fun runInstallDeb(uri: Uri) {

@@ -318,7 +318,9 @@ class DesktopActivity : ComponentActivity() {
                   'visibility:hidden!important;opacity:0!important;pointer-events:none!important;}',
                   'html,body,#noVNC_container,#noVNC_screen{margin:0;padding:0;width:100%;',
                   'height:100%;background:#14120F!important;overflow:hidden;}',
-                  '#noVNC_container{border-radius:0!important;}'
+                  '#noVNC_container{border-radius:0!important;}',
+                  '#noVNC_container canvas,#noVNC_screen canvas{',
+                  'object-fit:contain!important;object-position:center!important;}'
                 ].join('');
                 (document.head||document.documentElement).appendChild(css);
               }
@@ -343,10 +345,24 @@ class DesktopActivity : ComponentActivity() {
                   };
                 }
               }
+              function fit(){
+                try{
+                  if (window.UI && UI.rfb) {
+                    UI.rfb.scaleViewport = true;
+                    UI.rfb.clipViewport = false;
+                    UI.rfb.resizeSession = false;
+                  }
+                }catch(e){}
+              }
               patchFs();
+              fit();
               if (!window.__debarmFsTimer) {
-                window.__debarmFsTimer = setInterval(patchFs, 250);
+                window.__debarmFsTimer = setInterval(function(){ patchFs(); fit(); }, 250);
                 setTimeout(function(){ try{ clearInterval(window.__debarmFsTimer); }catch(e){} }, 12000);
+              }
+              if (!window.__debarmResizeHook) {
+                window.__debarmResizeHook = true;
+                window.addEventListener('resize', fit);
               }
               if (!window.__debarmErrorHook) {
                 window.__debarmErrorHook = true;
@@ -384,27 +400,27 @@ class DesktopActivity : ComponentActivity() {
         }
 
         fun chooseDisplaySize(activity: Activity): Pair<Int, Int> {
-            val rawW: Int
-            val rawH: Int
-            if (Build.VERSION.SDK_INT >= 30) {
-                val bounds: Rect = activity.windowManager.currentWindowMetrics.bounds
-                rawW = bounds.width()
-                rawH = bounds.height()
-            } else {
-                val metrics = DisplayMetrics()
-                @Suppress("DEPRECATION")
-                activity.windowManager.defaultDisplay.getRealMetrics(metrics)
-                rawW = metrics.widthPixels
-                rawH = metrics.heightPixels
+            // Use the physical display so Xvfb's aspect matches the
+            // immersive WebView. A second short-side cap would also keep
+            // the ratio, but real-metrics avoids letterboxing after the
+            // status bar is hidden.
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            activity.windowManager.defaultDisplay.getRealMetrics(metrics)
+            var rawW = metrics.widthPixels
+            var rawH = metrics.heightPixels
+            if (rawW <= 0 || rawH <= 0) {
+                if (Build.VERSION.SDK_INT >= 30) {
+                    val bounds: Rect = activity.windowManager.currentWindowMetrics.bounds
+                    rawW = bounds.width()
+                    rawH = bounds.height()
+                }
             }
             val maxLong = 1920
-            val maxShort = 1280
             val longSide = maxOf(rawW, rawH).coerceAtLeast(1)
-            val shortSide = minOf(rawW, rawH).coerceAtLeast(1)
-            val scale = minOf(1f, minOf(maxLong.toFloat() / longSide, maxShort.toFloat() / shortSide))
+            val scale = minOf(1f, maxLong.toFloat() / longSide)
             var w = (rawW * scale).toInt().and(0x7FFFFFFE).coerceAtLeast(1024)
             var h = (rawH * scale).toInt().and(0x7FFFFFFE).coerceAtLeast(640)
-            // Keep even dimensions for Xvfb.
             if (w % 2 != 0) w -= 1
             if (h % 2 != 0) h -= 1
             return w to h
@@ -440,68 +456,15 @@ private fun DesktopScreen(
             else -> onLeave()
         }
     }
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
-            .background(Ink)
-            .then(
-                if (immersive) Modifier
-                else Modifier.statusBarsPadding().navigationBarsPadding(),
-            ),
+            .background(Ink),
     ) {
-        if (!immersive) {
-            Text(
-                status,
-                color = Cream,
-                fontSize = 13.sp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Paper)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            )
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Paper)
-                    .padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TextButton(onClick = onToggleLog) {
-                    Text(if (showLog) "隱藏紀錄" else "顯示紀錄", color = Gold, fontSize = 13.sp)
-                }
-                TextButton(onClick = onOpenTerminal) {
-                    Text("開啟終端", color = Gold, fontSize = 13.sp)
-                }
-                if (connected) {
-                    TextButton(onClick = onEnterImmersive) {
-                        Text("進入全螢幕", color = Gold, fontSize = 13.sp)
-                    }
-                }
-            }
-            if (showLog) {
-                Text(
-                    log.ifBlank { "等候顯示伺服器與官方程式的紀錄…" },
-                    color = Muted,
-                    fontSize = 11.sp,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(if (connected) 120.dp else 180.dp)
-                        .background(Ink)
-                        .padding(8.dp)
-                        .verticalScroll(rememberScrollState()),
-                )
-            }
-        }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        ) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    WebView(ctx).apply {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                WebView(ctx).apply {
                         layoutParams = FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -538,23 +501,85 @@ private fun DesktopScreen(
                                 DesktopActivity.injectNovncSkin(view)
                             }
                         }
+                        addOnLayoutChangeListener { v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                                if (v is WebView) {
+                                    DesktopActivity.injectNovncSkin(v)
+                                    v.evaluateJavascript(
+                                        "try{window.dispatchEvent(new Event('resize'));}catch(e){}",
+                                        null,
+                                    )
+                                }
+                            }
+                        }
                         onWebView(this)
                     }
                 },
-            )
-            if (stackReady && !connected) {
-                Box(
+        )
+        if (!immersive) {
+            Column(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .statusBarsPadding(),
+            ) {
+                Text(
+                    status,
+                    color = Cream,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Paper)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+                Row(
                     Modifier
-                        .fillMaxSize()
-                        .background(Ink),
-                    contentAlignment = Alignment.Center,
+                        .fillMaxWidth()
+                        .background(Paper)
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Always a short connecting message — official Electron
-                    // stderr must not replace this with「啟動失敗」。
-                    Text("正在連上畫面…", color = Cream, fontSize = 15.sp)
+                    TextButton(onClick = onToggleLog) {
+                        Text(if (showLog) "隱藏紀錄" else "顯示紀錄", color = Gold, fontSize = 13.sp)
+                    }
+                    TextButton(onClick = onOpenTerminal) {
+                        Text("開啟終端", color = Gold, fontSize = 13.sp)
+                    }
+                    if (connected) {
+                        TextButton(onClick = onEnterImmersive) {
+                            Text("進入全螢幕", color = Gold, fontSize = 13.sp)
+                        }
+                    }
+                }
+                if (showLog) {
+                    Text(
+                        log.ifBlank { "等候顯示伺服器與官方程式的紀錄…" },
+                        color = Muted,
+                        fontSize = 11.sp,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(if (connected) 120.dp else 180.dp)
+                            .background(Ink.copy(alpha = 0.92f))
+                            .padding(8.dp)
+                            .verticalScroll(rememberScrollState()),
+                    )
                 }
             }
-            if (immersive) {
+        }
+        if (stackReady && !connected) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Ink),
+                contentAlignment = Alignment.Center,
+            ) {
+                // Always a short connecting message — official Electron
+                // stderr must not replace this with「啟動失敗」。
+                Text("正在連上畫面…", color = Cream, fontSize = 15.sp)
+            }
+        }
+        if (immersive) {
                 Box(
                     Modifier
                         .align(Alignment.TopStart)
@@ -599,7 +624,6 @@ private fun DesktopScreen(
                             .verticalScroll(rememberScrollState()),
                     )
                 }
-            }
         }
     }
 }

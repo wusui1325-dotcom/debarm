@@ -14,6 +14,7 @@ class DebArmPaths(context: Context) {
     val exchangeDir: File = File(filesDir, "exchange")
     val workspaceDir: File = File(filesDir, "workspace")
     val codexDownloadFile: File = File(cacheDir, CodexCatalog.assetName)
+    val chromeDownloadFile: File = File(cacheDir, CodexCatalog.chromeAssetName)
     val codexReadyMarker: File = File(filesDir, ".debarm-codex-ready")
     val prootTmpDir: File = File(cacheDir, "proot-tmp")
     val downloadFile: File = File(cacheDir, "rootfs.tar.xz")
