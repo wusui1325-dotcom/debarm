@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Original mark: a package with a small upward key, not the Debian swirl. -->
+    <path
+        android:fillColor="#E8C07A"
+        android:pathData="M34,40 L54,30 L74,40 L74,62 L54,72 L34,62 Z" />
+    <path
+        android:fillColor="#14120F"
+        android:pathData="M54,34 L70,42 L70,60 L54,68 L38,60 L38,42 Z" />
+    <path
+        android:fillColor="#E8C07A"
+        android:pathData="M54,38 L66,44 L66,58 L54,64 L42,58 L42,44 Z" />
+    <path
+        android:fillColor="#14120F"
+        android:pathData="M52,46 h4 v8 h8 v4 h-8 v8 h-4 v-8 h-8 v-4 h8 z" />
+</vector>

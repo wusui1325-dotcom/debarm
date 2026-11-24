@@ -1,0 +1,14 @@
+DebArm
+Copyright (c) 2026 wusui1325-dotcom / Wusper
+
+本專案自有原始碼以 MIT 授權，見 LICENSE。
+
+本發行物另包含獨立的第三方程式與函式庫，授權條件與其上游相同，
+詳見 THIRD_PARTY.md 與 licenses/ 目錄。特別是：
+
+- PRoot（GPL-2.0）：以獨立執行檔形式隨 App 發行，執行時由 DebArm exec。
+- libtalloc（LGPL-3.0）
+- libandroid-shmem（BSD-3-Clause）
+- xterm.js 與 @xterm/addon-fit（MIT）
+
+Debian rootfs 不會打進 APK；第一次使用時會自公開來源下載，並受 Debian 及其套件各自的授權約束。
