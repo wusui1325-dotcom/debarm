@@ -59,30 +59,113 @@ object CodexRuntime {
         }
     }
 
+    /**
+     * Official entry from chatgpt_26.1120.41243_arm64.deb (dpkg-deb -c):
+     *   /usr/bin/chatgpt -> ../lib/chatgpt/codex-launcher   (63-byte wrapper)
+     *   /usr/lib/chatgpt/codex-launcher                     exec's ./ChatGPT
+     *   /usr/lib/chatgpt/ChatGPT                            323,947,816-byte ELF
+     *   desktop Exec=chatgpt %U
+     * A previous check required length > 1 MB and looked for lowercase
+     * usr/lib/chatgpt/chatgpt, so a completed dpkg still looked "missing".
+     */
     fun officialBinary(paths: DebArmPaths): File? {
-        val candidates = listOf(
-            File(paths.rootfsDir, "usr/bin/chatgpt"),
-            File(paths.rootfsDir, "opt/ChatGPT/chatgpt"),
-            File(paths.rootfsDir, "opt/chatgpt/chatgpt"),
-            File(paths.rootfsDir, "usr/share/chatgpt/chatgpt"),
-            File(paths.rootfsDir, "usr/lib/chatgpt/chatgpt"),
+        val root = paths.rootfsDir
+        val known = listOf(
+            "usr/bin/chatgpt",
+            "usr/lib/chatgpt/codex-launcher",
+            "usr/lib/chatgpt/ChatGPT",
+            "usr/lib/chatgpt/chatgpt",
+            "opt/ChatGPT/chatgpt",
+            "opt/ChatGPT/ChatGPT",
+            "opt/chatgpt/chatgpt",
+            "usr/share/chatgpt/chatgpt",
         )
-        return candidates.firstOrNull { it.isFile && it.canExecute() && it.length() > 1_000_000L }
-            ?: candidates.firstOrNull { it.isFile && it.length() > 1_000_000L }
+        for (rel in known) {
+            resolveGuestFile(root, rel)?.let { return it }
+        }
+        desktopExec(root)?.let { return it }
+        dpkgListedBinary(root)?.let { return it }
+        return null
     }
 
-    fun isInstalled(paths: DebArmPaths): Boolean {
-        if (!paths.codexReadyMarker.exists()) return false
-        val marker = runCatching { paths.codexReadyMarker.readText() }.getOrDefault("")
-        if (!marker.contains(CodexCatalog.version) || !marker.contains(CodexCatalog.packageName)) {
-            return false
+    private fun resolveGuestFile(root: File, rel: String): File? {
+        val f = File(root, rel.removePrefix("/").removePrefix("./"))
+        if (!f.exists()) return null
+        val real = try { f.canonicalFile } catch (_: Exception) { f }
+        return if (real.isFile && real.length() > 0L) f else null
+    }
+
+    private fun desktopExec(root: File): File? {
+        val desktop = File(root, "usr/share/applications/chatgpt.desktop")
+        if (!desktop.isFile) return null
+        val text = runCatching { desktop.readText() }.getOrDefault("")
+        val exec = text.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("Exec=") }
+            ?.removePrefix("Exec=")
+            ?.trim()
+            ?.split(Regex("\\s+"))
+            ?.firstOrNull()
+            ?: return null
+        val rel = when {
+            exec.startsWith("/") -> exec.removePrefix("/")
+            else -> "usr/bin/$exec"
         }
-        if (officialBinary(paths) != null) return true
+        return resolveGuestFile(root, rel)
+    }
+
+    private fun dpkgListedBinary(root: File): File? {
+        val list = File(root, "var/lib/dpkg/info/${CodexCatalog.packageName}.list")
+        if (!list.isFile) return null
+        val lines = runCatching { list.readLines() }.getOrDefault(emptyList())
+        val preferred = lines.map { it.trim() }.filter { path ->
+            path.endsWith("/chatgpt") || path.endsWith("/ChatGPT") ||
+                path.endsWith("/codex-launcher")
+        }
+        for (path in preferred) {
+            resolveGuestFile(root, path)?.let { return it }
+        }
+        return null
+    }
+
+    fun dpkgHasOfficialPackage(paths: DebArmPaths): Boolean {
         val status = File(paths.rootfsDir, "var/lib/dpkg/status")
         if (!status.isFile) return false
         val text = runCatching { status.readText() }.getOrDefault("")
-        return text.contains("Package: ${CodexCatalog.packageName}\n") &&
-            text.contains("Version: ${CodexCatalog.version}")
+        val block = text.split("\n\n").firstOrNull { stanza ->
+            stanza.lineSequence().any { it == "Package: ${CodexCatalog.packageName}" }
+        } ?: return false
+        val versionOk = block.lineSequence().any {
+            it == "Version: ${CodexCatalog.version}" || it.startsWith("Version: ${CodexCatalog.version}")
+        }
+        val stateOk = block.lineSequence().any { line ->
+            line.startsWith("Status:") && (
+                line.contains("installed") || line.contains("unpacked") ||
+                    line.contains("half-configured")
+            )
+        }
+        return versionOk && stateOk
+    }
+
+    fun rememberInstalled(paths: DebArmPaths) {
+        paths.codexReadyMarker.writeText(
+            "${CodexCatalog.packageName} ${CodexCatalog.version} ${CodexCatalog.sha256}\n",
+        )
+        ensureStartScript(paths)
+        ensureWorkspace(paths)
+        ensureGuestUser(paths)
+    }
+
+    fun isInstalled(paths: DebArmPaths): Boolean {
+        val binary = officialBinary(paths)
+        if (binary != null) {
+            val marker = runCatching { paths.codexReadyMarker.readText() }.getOrDefault("")
+            if (!marker.contains(CodexCatalog.version) || !marker.contains(CodexCatalog.packageName)) {
+                runCatching { rememberInstalled(paths) }
+            }
+            return true
+        }
+        return false
     }
 
     fun storageBinds(paths: DebArmPaths): List<Pair<String, String>> {
@@ -282,8 +365,8 @@ if ! bash -c 'echo >/dev/tcp/127.0.0.1/${CodexCatalog.displayPort}' 2>/dev/null;
 fi
 
 CHATGPT=""
-for c in /usr/bin/chatgpt /opt/ChatGPT/chatgpt /opt/chatgpt/chatgpt /usr/share/chatgpt/chatgpt /usr/lib/chatgpt/chatgpt; do
-  if [ -x "${'$'}c" ]; then CHATGPT="${'$'}c"; break; fi
+for c in /usr/bin/chatgpt /usr/lib/chatgpt/codex-launcher /usr/lib/chatgpt/ChatGPT /usr/lib/chatgpt/chatgpt /opt/ChatGPT/chatgpt /opt/ChatGPT/ChatGPT /opt/chatgpt/chatgpt /usr/share/chatgpt/chatgpt; do
+  if [ -e "${'$'}c" ]; then CHATGPT="${'$'}c"; break; fi
 done
 if [ -z "${'$'}CHATGPT" ]; then
   CHATGPT="${'$'}(command -v chatgpt 2>/dev/null || true)"

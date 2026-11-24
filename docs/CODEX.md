@@ -16,6 +16,8 @@
 | 版本化 URL | `https://persistent.oaistatic.com/codex-app-prod/linux/deb/pool/main/c/chatgpt/chatgpt_26.1120.41243_arm64.deb` |
 | 套件索引 | `https://persistent.oaistatic.com/codex-app-prod/linux/deb/dists/stable/main/binary-arm64/Packages` |
 
+官方套件的啟動入口是 `/usr/bin/chatgpt`（符號連結到 `/usr/lib/chatgpt/codex-launcher`），真正的桌面執行檔是 `/usr/lib/chatgpt/ChatGPT`。桌面檔的 `Exec=chatgpt %U`。
+
 首次準備時才下載並核對 SHA-256，因此 APK 本身保持精簡。請預留約 **4 GB** 可用空間（Debian 環境、Xvfb／VNC 顯示堆疊，以及官方套件本身）。
 
 ## 一鍵桌面視窗

@@ -393,6 +393,11 @@ class EnvironmentController(private val app: Application) {
     }
 
     private fun installOfficialCodex() {
+        if (CodexRuntime.officialBinary(paths) != null) {
+            CodexRuntime.rememberInstalled(paths)
+            appendLog("偵測到已安裝的官方 chatgpt（${CodexRuntime.officialBinary(paths)}），略過重新下載。")
+            return
+        }
         _state.update {
             it.copy(
                 phase = EnvUiState.Phase.Downloading,
@@ -501,15 +506,17 @@ class EnvironmentController(private val app: Application) {
             }
         }
         CodexRuntime.ensureStartScript(paths)
-        if (CodexRuntime.officialBinary(paths) == null) {
-            throw IOException("dpkg 已結束，但找不到官方 chatgpt 執行檔。請看下方紀錄。")
+        val binary = CodexRuntime.officialBinary(paths)
+        if (binary == null) {
+            val dpkgState = if (CodexRuntime.dpkgHasOfficialPackage(paths)) {
+                "dpkg 狀態顯示 chatgpt 已寫入，但仍找不到執行檔（應為 /usr/bin/chatgpt 或 /usr/lib/chatgpt/ChatGPT）。"
+            } else {
+                "dpkg 結束後找不到官方 chatgpt 執行檔（應為 /usr/bin/chatgpt 或 /usr/lib/chatgpt/ChatGPT）。"
+            }
+            throw IOException("$dpkgState 請看下方紀錄。TPM／udev 的 Permission denied 可以忽略。")
         }
-        paths.codexReadyMarker.writeText(
-            "${CodexCatalog.packageName} ${CodexCatalog.version} ${CodexCatalog.sha256}\n",
-        )
-        CodexRuntime.ensureWorkspace(paths)
-        CodexRuntime.ensureGuestUser(paths)
-        appendLog("已安裝官方桌面套件 ${CodexCatalog.packageName} ${CodexCatalog.version}")
+        CodexRuntime.rememberInstalled(paths)
+        appendLog("已安裝官方桌面套件 ${CodexCatalog.packageName} ${CodexCatalog.version}（執行檔 ${binary.relativeTo(paths.rootfsDir)}）")
     }
 
     private suspend fun runInstallDeb(uri: Uri) {
