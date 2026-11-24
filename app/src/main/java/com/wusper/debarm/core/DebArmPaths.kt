@@ -12,6 +12,9 @@ class DebArmPaths(context: Context) {
     val rootfsPartialDir: File = File(filesDir, "rootfs.partial")
     val readyMarker: File = File(rootfsDir, ".debarm-ready")
     val exchangeDir: File = File(filesDir, "exchange")
+    val workspaceDir: File = File(filesDir, "workspace")
+    val codexDownloadFile: File = File(cacheDir, CodexCatalog.assetName)
+    val codexReadyMarker: File = File(filesDir, ".debarm-codex-ready")
     val prootTmpDir: File = File(cacheDir, "proot-tmp")
     val downloadFile: File = File(cacheDir, "rootfs.tar.xz")
     val nativeLibraryDir: File = File(ctx.applicationInfo.nativeLibraryDir)
@@ -25,6 +28,7 @@ class DebArmPaths(context: Context) {
         filesDir.mkdirs()
         cacheDir.mkdirs()
         exchangeDir.mkdirs()
+        workspaceDir.mkdirs()
         prootTmpDir.mkdirs()
         stageHostLibs()
     }

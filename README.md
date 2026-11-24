@@ -19,6 +19,7 @@
 
 ## 版本
 
+- **Codex 專屬版 1.0.0**（另開套件 `com.wusper.debarm.codex`）：只啟動官方 Codex CLI，工作區在 App 私有目錄，並可申請裝置儲存完全權限。詳見 [docs/CODEX.md](docs/CODEX.md)。不影響通用 DebArm。
 - **1.1.1**：修正安裝環境解壓後出現「無法執行 guest 指令（exit 139）」的問題。先前為了讓 PRoot 從 App 的 `nativeLibraryDir` 載入 `libtalloc`，用 patchelf 改寫了 ELF，卻破壞了 `INTERP` 與 `.dynstr` 段，導致 PRoot 一啟動就段錯誤。現在改用未改寫的上游二進制，在執行時把 `libtalloc.so.2` 放到 App 私有目錄並以 `LD_LIBRARY_PATH` 載入。PTY 函式庫也改為 16 KB 頁面對齊。請覆蓋安裝本版；若先前安裝失敗，請再點一次「安裝 Debian 環境」（已解壓的檔案可沿用）。
 - **1.1.0**：APK 從約 19.45 MB 壓到約 1.57 MB，並整理介面與套件清單效能。
 - **1.0.0**：第一個可側載版本。

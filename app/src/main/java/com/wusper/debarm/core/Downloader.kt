@@ -78,4 +78,32 @@ object Downloader {
         }
         return conn
     }
+
+    /**
+     * Try each official URL in order. Checksum is verified for every
+     * successful HTTP download; a failed checksum or network error
+     * falls through to the next source.
+     */
+    fun downloadWithFallback(
+        urls: List<String>,
+        dest: File,
+        expectedSha256: String,
+        expectedBytes: Long = 0,
+        cancelled: () -> Boolean = { false },
+        onProgress: (read: Long, total: Long) -> Unit = { _, _ -> },
+    ): String {
+        var last: Exception? = null
+        for (url in urls) {
+            if (cancelled()) throw IOException("下載已取消")
+            try {
+                download(url, dest, expectedSha256, expectedBytes, cancelled, onProgress)
+                return url
+            } catch (e: Exception) {
+                last = e
+                dest.delete()
+                File(dest.parentFile, dest.name + ".part").delete()
+            }
+        }
+        throw last ?: IOException("沒有可用的下載來源")
+    }
 }

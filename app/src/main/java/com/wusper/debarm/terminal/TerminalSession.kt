@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Base64
 import com.wusper.debarm.core.DebArmPaths
+import com.wusper.debarm.core.CodexRuntime
 import com.wusper.debarm.core.Proot
 import com.wusper.debarm.core.Pty
 import java.io.ByteArrayOutputStream
@@ -12,6 +13,7 @@ import kotlin.concurrent.thread
 
 class TerminalSession(
     private val paths: DebArmPaths,
+    private val launchCodex: Boolean = false,
     private val onOutput: (b64: String) -> Unit,
     private val onExit: (code: Int) -> Unit,
 ) {
@@ -25,8 +27,9 @@ class TerminalSession(
         paths.ensureWorkDirs()
         Proot.assertRunnable(paths)
         Pty.ensureLoaded()
+        val argv = if (launchCodex) CodexRuntime.argv(paths) else Proot.argv(paths, emptyList(), loginShell = true)
         val ids = Pty.nativeStart(
-            argv = Proot.argv(paths, emptyList(), loginShell = true),
+            argv = argv,
             envp = Proot.envp(paths),
             cwd = paths.filesDir.absolutePath,
             rows = rows,

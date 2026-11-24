@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class EnvUiState(
@@ -30,6 +31,8 @@ data class EnvUiState(
     val log: String = "",
     val lastInstalled: String? = null,
     val packageFilter: String = "",
+    val codexReady: Boolean = false,
+    val codexVersion: String? = null,
 ) {
     enum class Phase {
         Checking, NeedSetup, Downloading, Extracting, Configuring,
@@ -76,6 +79,15 @@ class EnvironmentController(private val app: Application) {
         scope.launch { runInstallEnvironment() }
     }
 
+    fun prepareCodex() {
+        if (_state.value.isBusy && _state.value.phase != EnvUiState.Phase.NeedSetup &&
+            _state.value.phase != EnvUiState.Phase.Error &&
+            _state.value.phase != EnvUiState.Phase.Ready
+        ) return
+        cancelled.set(false)
+        scope.launch { runPrepareCodex() }
+    }
+
     fun installDeb(uri: Uri) {
         cancelled.set(false)
         scope.launch { runInstallDeb(uri) }
@@ -109,6 +121,8 @@ class EnvironmentController(private val app: Application) {
             }
             return
         }
+        val codexReady = CodexRuntime.isInstalled(paths)
+        val codexVersion = if (codexReady) CodexCatalog.version else null
         if (isReady()) {
             val label = readDebianLabel()
             val pkgs = runCatching { PackageQuery.list(paths) }.getOrDefault(emptyList())
@@ -121,6 +135,8 @@ class EnvironmentController(private val app: Application) {
                     diskUsedBytes = used,
                     diskFreeBytes = free,
                     packages = pkgs,
+                    codexReady = codexReady,
+                    codexVersion = codexVersion,
                 )
             }
         } else {
@@ -133,6 +149,8 @@ class EnvironmentController(private val app: Application) {
                     diskUsedBytes = used,
                     diskFreeBytes = free,
                     packages = emptyList(),
+                    codexReady = false,
+                    codexVersion = null,
                 )
             }
         }
@@ -323,6 +341,105 @@ class EnvironmentController(private val app: Application) {
         appendLog("環境已就緒。")
     }
 
+    private suspend fun runPrepareCodex() {
+        try {
+            paths.ensureWorkDirs()
+            CodexRuntime.ensureWorkspace(paths)
+            if (!Arch.isArm64Device()) {
+                throw IOException("這支 App 只在 arm64-v8a 裝置上原生執行 aarch64 二進制，不模擬 x86。\n${Arch.deviceSummary()}")
+            }
+            if (freeBytes() < 700L * 1024 * 1024) {
+                throw IOException("可用空間不足 700 MB（Debian 環境與官方 Codex CLI 約需此空間）。目前剩餘 ${formatBytes(freeBytes())}。")
+            }
+            Proot.assertRunnable(paths)
+            if (!isReady()) {
+                var lastError: Exception? = null
+                for (image in RootfsCatalog.all) {
+                    try {
+                        downloadAndExtract(image)
+                        lastError = null
+                        break
+                    } catch (e: Exception) {
+                        lastError = e
+                        appendLog("來源失敗（${image.name}）：${e.message}")
+                        if (isCancelled()) break
+                    }
+                }
+                if (lastError != null) throw lastError
+                if (isCancelled()) throw IOException("已取消")
+                configureRootfs()
+            }
+            CodexRuntime.ensureGuestUser(paths)
+            if (!CodexRuntime.isInstalled(paths)) {
+                installOfficialCodex()
+            }
+            refreshNow()
+        } catch (e: Exception) {
+            _state.update {
+                it.copy(
+                    phase = EnvUiState.Phase.Error,
+                    error = e.message ?: e.toString(),
+                    message = "準備 Codex 失敗",
+                )
+            }
+            updateDiskAsync()
+        }
+    }
+
+    private fun installOfficialCodex() {
+        _state.update {
+            it.copy(
+                phase = EnvUiState.Phase.Downloading,
+                message = "正在下載官方 Codex CLI ${CodexCatalog.version}…",
+                error = null,
+                downloadRead = 0,
+                downloadTotal = CodexCatalog.bytes,
+            )
+        }
+        appendLog("下載官方 Codex ${CodexCatalog.version}（${CodexCatalog.assetName}）")
+        val haveCache = paths.codexDownloadFile.exists() &&
+            runCatching { Sha256.of(paths.codexDownloadFile) }.getOrNull()
+                ?.let { Sha256.equal(it, CodexCatalog.sha256) } == true
+        if (haveCache) {
+            appendLog("已有校驗相符的官方 Codex 快取，略過下載。")
+        } else {
+            val used = Downloader.downloadWithFallback(
+                urls = CodexCatalog.urls,
+                dest = paths.codexDownloadFile,
+                expectedSha256 = CodexCatalog.sha256,
+                expectedBytes = CodexCatalog.bytes,
+                cancelled = ::isCancelled,
+            ) { read, total ->
+                _state.update {
+                    it.copy(
+                        downloadRead = read,
+                        downloadTotal = if (total > 0) total else it.downloadTotal,
+                        message = "正在下載官方 Codex CLI（${formatBytes(read)}" +
+                            if (total > 0) " / ${formatBytes(total)}）" else "）",
+                    )
+                }
+            }
+            appendLog("已由 $used 完成下載並通過 SHA-256 校驗。")
+        }
+        if (isCancelled()) throw IOException("已取消")
+        _state.update {
+            it.copy(phase = EnvUiState.Phase.Extracting, message = "正在安裝官方 Codex CLI…")
+        }
+        val dest = CodexRuntime.officialBinary(paths)
+        SafeTarGz.extractCodexBinary(paths.codexDownloadFile, dest)
+        val alt = File(paths.rootfsDir, "usr/bin/codex")
+        if (!alt.exists()) {
+            alt.parentFile?.mkdirs()
+            runCatching {
+                Files.createSymbolicLink(alt.toPath(), File(CodexCatalog.guestBinaryPath).toPath())
+            }
+        }
+        paths.codexReadyMarker.writeText(
+            "codex ${CodexCatalog.version} ${CodexCatalog.sha256}\n",
+        )
+        appendLog("已安裝官方 Codex CLI ${CodexCatalog.version} 到 ${CodexCatalog.guestBinaryPath}")
+    }
+
     private suspend fun runInstallDeb(uri: Uri) {
         try {
             if (!isReady()) {
@@ -409,6 +526,8 @@ class EnvironmentController(private val app: Application) {
         runCatching { paths.rootfsDir.deleteRecursively() }
         runCatching { paths.rootfsPartialDir.deleteRecursively() }
         runCatching { paths.downloadFile.delete() }
+        runCatching { paths.codexDownloadFile.delete() }
+        runCatching { paths.codexReadyMarker.delete() }
         runCatching { paths.exchangeDir.listFiles()?.forEach { it.delete() } }
         cancelled.set(false)
         refreshNow()

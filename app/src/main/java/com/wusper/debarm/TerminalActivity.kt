@@ -47,6 +47,10 @@ import com.wusper.debarm.ui.Paper
 import com.wusper.debarm.ui.PaperHigh
 
 class TerminalActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_LAUNCH_CODEX = "launch_codex"
+    }
+
     private var session: TerminalSession? = null
     private var webView: WebView? = null
     private var ctrlOn = false
@@ -92,8 +96,10 @@ class TerminalActivity : ComponentActivity() {
 
     private fun attachSession(wv: WebView, paths: com.wusper.debarm.core.DebArmPaths) {
         if (started) return
+        val launchCodex = intent.getBooleanExtra(EXTRA_LAUNCH_CODEX, BuildConfig.CODEX_EDITION)
         val session = TerminalSession(
             paths = paths,
+            launchCodex = launchCodex,
             onOutput = { b64 ->
                 wv.evaluateJavascript("window.DebArmTerm && DebArmTerm.writeBase64('$b64')", null)
             },

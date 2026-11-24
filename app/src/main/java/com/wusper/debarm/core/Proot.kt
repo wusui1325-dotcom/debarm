@@ -48,6 +48,11 @@ object Proot {
      * @param guestCommand if empty, starts a login shell; otherwise
      *        runs `bash -lc` with the joined command, or a raw argv
      *        starting with an absolute guest path when [raw] is true.
+     * @param changeId if null, uses --root-id (uid 0). Otherwise
+     *        `-i uid:gid` (e.g. "1000:1000") so the guest looks like
+     *        a regular Linux user.
+     * @param kernelRelease if set, passed as `-k` so `uname -r` looks
+     *        like a desktop Debian kernel instead of the Android one.
      */
     fun argv(
         paths: DebArmPaths,
@@ -56,12 +61,25 @@ object Proot {
         raw: Boolean = false,
         extraBinds: List<Pair<String, String>> = emptyList(),
         loginShell: Boolean = !raw && guestCommand.isEmpty(),
+        changeId: String? = null,
+        kernelRelease: String? = null,
+        bindApex: Boolean = true,
+        extraGuestEnv: Map<String, String> = emptyMap(),
     ): Array<String> {
         val args = mutableListOf(
             paths.proot.absolutePath,
             "--kill-on-exit",
             "--link2symlink",
-            "--root-id",
+        )
+        if (changeId.isNullOrBlank()) {
+            args += "--root-id"
+        } else {
+            args += listOf("-i", changeId)
+        }
+        if (!kernelRelease.isNullOrBlank()) {
+            args += listOf("-k", kernelRelease)
+        }
+        args += listOf(
             "-r", paths.rootfsDir.absolutePath,
             "-w", cwd,
             "-b", "/dev",
@@ -78,25 +96,29 @@ object Proot {
             args += listOf("-b", "${shm.absolutePath}:/dev/shm")
         }
         val apex = File("/apex")
-        if (apex.exists()) args += listOf("-b", "/apex")
+        if (bindApex && apex.exists()) args += listOf("-b", "/apex")
         for ((src, dst) in extraBinds) {
             args += listOf("-b", "$src:$dst")
         }
         // Clean guest environment — do not leak Android JVM vars.
-        args += listOf(
-            "/usr/bin/env", "-i",
-            "HOME=/root",
-            "USER=root",
-            "LOGNAME=root",
-            "LANG=C.UTF-8",
-            "LC_ALL=C.UTF-8",
-            "TERM=xterm-256color",
-            "COLORTERM=truecolor",
-            "PATH=$GUEST_PATH",
-            "TMPDIR=/tmp",
-            "HOSTNAME=debarm",
-            "DEBIAN_FRONTEND=noninteractive",
+        val guestEnv = linkedMapOf(
+            "HOME" to "/root",
+            "USER" to "root",
+            "LOGNAME" to "root",
+            "LANG" to "C.UTF-8",
+            "LC_ALL" to "C.UTF-8",
+            "TERM" to "xterm-256color",
+            "COLORTERM" to "truecolor",
+            "PATH" to GUEST_PATH,
+            "TMPDIR" to "/tmp",
+            "HOSTNAME" to "debarm",
+            "DEBIAN_FRONTEND" to "noninteractive",
         )
+        guestEnv.putAll(extraGuestEnv)
+        args += listOf("/usr/bin/env", "-i")
+        for ((k, v) in guestEnv) {
+            args += "$k=$v"
+        }
         when {
             loginShell -> args += listOf("/bin/bash", "--login")
             raw -> args += guestCommand

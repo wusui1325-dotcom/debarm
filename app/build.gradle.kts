@@ -24,6 +24,23 @@ android {
         resourceConfigurations += listOf("zh", "zh-rTW", "zh-rHK", "en")
     }
 
+    flavorDimensions += "edition"
+    productFlavors {
+        create("standard") {
+            dimension = "edition"
+            isDefault = true
+            applicationId = "com.wusper.debarm"
+            buildConfigField("boolean", "CODEX_EDITION", "false")
+        }
+        create("codex") {
+            dimension = "edition"
+            applicationId = "com.wusper.debarm.codex"
+            versionCode = 1
+            versionName = "1.0.0"
+            buildConfigField("boolean", "CODEX_EDITION", "true")
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -85,6 +102,8 @@ android {
         // Sideload-only on purpose: target 28 is required to exec the
         // Debian rootfs from filesDir (see README).
         disable += "ExpiredTargetSdkVersion"
+        disable += "AllFilesAccessPolicy"
+        disable += "ScopedStorage"
     }
 }
 
