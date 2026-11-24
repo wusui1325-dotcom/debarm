@@ -273,6 +273,25 @@ mkdir -p /tmp/runtime-user /tmp/.X11-unix /workspace /tmp/xdg
 chmod 700 /tmp/runtime-user 2>/dev/null
 chmod 1777 /tmp/.X11-unix 2>/dev/null
 
+wait_tcp() {
+  local port="${'$'}1"
+  local name="${'$'}2"
+  local tries="${'$'}{3:-80}"
+  local i
+  for i in ${'$'}(seq 1 "${'$'}tries"); do
+    if bash -c "echo >/dev/tcp/127.0.0.1/${'$'}port" 2>/dev/null; then
+      echo "debarm: ${'$'}name is listening"
+      return 0
+    fi
+    if command -v python3 >/dev/null 2>&1 && python3 -c "import socket;s=socket.create_connection(('127.0.0.1', int('${'$'}port')),0.2);s.close()" 2>/dev/null; then
+      echo "debarm: ${'$'}name is listening"
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
 # Fresh display each launch; PRoot --kill-on-exit also reaps children.
 pkill -f "Xvfb :${CodexCatalog.displayNumber}" >/dev/null 2>&1
 pkill -f "x11vnc.*rfbport ${CodexCatalog.vncPort}" >/dev/null 2>&1
@@ -317,14 +336,33 @@ if ! command -v x11vnc >/dev/null 2>&1; then
   echo "debarm: x11vnc is not installed" >&2
   exit 1
 fi
-x11vnc -display :${CodexCatalog.displayNumber} -forever -shared -localhost -rfbport ${CodexCatalog.vncPort} -nopw -xkb -repeat -noxdamage -ncache 0 -wait 10 >/tmp/x11vnc.log 2>&1 &
-for i in ${'$'}(seq 1 80); do
-  if bash -c 'echo >/dev/tcp/127.0.0.1/${CodexCatalog.vncPort}' 2>/dev/null; then
-    echo "debarm: x11vnc is listening"
-    break
+start_x11vnc() {
+  # Bind IPv4 127.0.0.1 only. -localhost can resolve to ::1, which
+  # leaves 127.0.0.1:5900 closed while websockify still serves HTTP.
+  # -noshm is required under PRoot (MIT-SHM usually fails and x11vnc exits).
+  x11vnc -display :${CodexCatalog.displayNumber} \
+    -forever -shared -nopw \
+    -listen 127.0.0.1 -noipv6 -rfbport ${CodexCatalog.vncPort} \
+    -xkb -repeat -noxdamage -ncache 0 -noshm -noxrecord \
+    -o /tmp/x11vnc.log ${'$'}@ >/tmp/x11vnc.stdout 2>&1 &
+}
+start_x11vnc
+if ! wait_tcp ${CodexCatalog.vncPort} x11vnc 80; then
+  echo "debarm: x11vnc first start failed, retrying with -auth guess" >&2
+  cat /tmp/x11vnc.log >&2 2>/dev/null
+  cat /tmp/x11vnc.stdout >&2 2>/dev/null
+  pkill -f "x11vnc.*rfbport ${CodexCatalog.vncPort}" >/dev/null 2>&1
+  sleep 0.4
+  start_x11vnc -auth guess
+  if ! wait_tcp ${CodexCatalog.vncPort} x11vnc 80; then
+    echo "debarm: x11vnc failed to listen on 127.0.0.1:${CodexCatalog.vncPort}" >&2
+    echo "debarm: ---- x11vnc.log ----" >&2
+    cat /tmp/x11vnc.log >&2 2>/dev/null
+    echo "debarm: ---- x11vnc.stdout ----" >&2
+    cat /tmp/x11vnc.stdout >&2 2>/dev/null
+    exit 1
   fi
-  sleep 0.25
-done
+fi
 
 NOVNC_WEB=""
 for d in /usr/share/novnc /usr/share/novnc/noVNC /usr/share/python3-novnc /usr/share/novnc/utils/../; do
@@ -351,18 +389,21 @@ fi
 
 echo "debarm: starting websockify on ${CodexCatalog.displayPort} (web=${'$'}NOVNC_WEB)"
 ${'$'}WS --web="${'$'}NOVNC_WEB" 127.0.0.1:${CodexCatalog.displayPort} 127.0.0.1:${CodexCatalog.vncPort} >/tmp/websockify.log 2>&1 &
-for i in ${'$'}(seq 1 80); do
-  if bash -c 'echo >/dev/tcp/127.0.0.1/${CodexCatalog.displayPort}' 2>/dev/null; then
-    echo "debarm: noVNC is listening on ${CodexCatalog.displayPort}"
-    break
-  fi
-  sleep 0.25
-done
-if ! bash -c 'echo >/dev/tcp/127.0.0.1/${CodexCatalog.displayPort}' 2>/dev/null; then
-  echo "debarm: websockify failed to listen" >&2
-  cat /tmp/websockify.log >&2
+if ! wait_tcp ${CodexCatalog.displayPort} noVNC 80; then
+  echo "debarm: websockify failed to listen on 127.0.0.1:${CodexCatalog.displayPort}" >&2
+  echo "debarm: ---- websockify.log ----" >&2
+  cat /tmp/websockify.log >&2 2>/dev/null
+  echo "debarm: ---- x11vnc.log ----" >&2
+  cat /tmp/x11vnc.log >&2 2>/dev/null
   exit 1
 fi
+# Confirm the VNC backend is still up before the WebView is allowed to connect.
+if ! wait_tcp ${CodexCatalog.vncPort} x11vnc 8; then
+  echo "debarm: x11vnc stopped before noVNC was ready" >&2
+  cat /tmp/x11vnc.log >&2 2>/dev/null
+  exit 1
+fi
+echo "debarm: display stack ready (Xvfb=:${CodexCatalog.displayNumber} vnc=127.0.0.1:${CodexCatalog.vncPort} novnc=127.0.0.1:${CodexCatalog.displayPort})"
 
 CHATGPT=""
 for c in /usr/bin/chatgpt /usr/lib/chatgpt/codex-launcher /usr/lib/chatgpt/ChatGPT /usr/lib/chatgpt/chatgpt /opt/ChatGPT/chatgpt /opt/ChatGPT/ChatGPT /opt/chatgpt/chatgpt /usr/share/chatgpt/chatgpt; do

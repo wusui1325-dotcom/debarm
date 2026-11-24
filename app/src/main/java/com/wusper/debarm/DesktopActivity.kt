@@ -97,21 +97,22 @@ class DesktopActivity : ComponentActivity() {
     private fun appendLog(chunk: String) {
         val next = (logText.value + chunk).takeLast(8000)
         logText.value = next
+        // Once the WebView has connected, keep the success status. Later
+        // "launching official app" must not overwrite "畫面已連線".
+        if (connected.value) return
         val line = chunk
         when {
-            "Xvfb is ready" in line -> statusText.value = "顯示伺服器已就緒，正在啟動 VNC…"
             "starting Xvfb" in line -> statusText.value = "正在啟動顯示伺服器（Xvfb）…"
-            "x11vnc is listening" in line -> statusText.value = "VNC 已連線，正在啟動 noVNC…"
-            "noVNC is listening" in line -> statusText.value = "畫面通道已就緒，正在啟動官方 ChatGPT…"
-            "launching official app" in line -> statusText.value = "正在啟動官方 ChatGPT 桌面版…"
-            "chatgpt exited" in line -> {
-                if (!connected.value) statusText.value = "官方程式已結束。請看紀錄，或開啟終端後援。"
-            }
+            "Xvfb is ready" in line -> statusText.value = "Xvfb 已就緒，正在啟動 x11vnc…"
+            "x11vnc is listening" in line -> statusText.value = "x11vnc 已就緒，正在啟動 websockify…"
+            "noVNC is listening" in line || "display stack ready" in line ->
+                statusText.value = "websockify 已就緒，正在連線畫面…"
+            "launching official app" in line -> statusText.value = "畫面通道已就緒，正在啟動官方 ChatGPT…"
+            "chatgpt exited" in line ->
+                statusText.value = "官方程式已結束。請看紀錄，或開啟終端後援。"
             "failed" in line.lowercase() || "not found" in line.lowercase() || "not installed" in line.lowercase() -> {
-                if (!connected.value) {
-                    statusText.value = "啟動失敗：${chunk.trim().lineSequence().firstOrNull().orEmpty()}"
-                    showLog.value = true
-                }
+                statusText.value = "啟動失敗：${chunk.trim().lineSequence().firstOrNull().orEmpty()}"
+                showLog.value = true
             }
         }
     }
@@ -169,7 +170,10 @@ class DesktopActivity : ComponentActivity() {
 
     companion object {
         val NOVNC_URL =
-            "http://127.0.0.1:${CodexCatalog.displayPort}/vnc.html?autoconnect=1&reconnect=1&resize=scale&reconnect_delay=2000"
+            "http://127.0.0.1:${CodexCatalog.displayPort}/vnc.html" +
+                "?autoconnect=true&reconnect=true&reconnect_delay=2000" +
+                "&resize=scale&encrypt=0&host=127.0.0.1" +
+                "&port=${CodexCatalog.displayPort}&path=websockify"
     }
 }
 

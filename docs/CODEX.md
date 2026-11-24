@@ -26,11 +26,11 @@
 
 1. `Xvfb` 虛擬顯示器（`:1`，1280×800）
 2. `openbox` 視窗管理員
-3. `x11vnc`（只聽 `127.0.0.1:5900`）
+3. `x11vnc`（明確綁定 IPv4 `127.0.0.1:5900`，並加上 `-noshm`；未聽成功不會繼續）
 4. `websockify` + noVNC（`127.0.0.1:6080`）
 5. 官方 `/usr/bin/chatgpt`，並加上 Electron 在沒有真實桌面／GPU 時需要的參數（`--no-sandbox`、`--ozone-platform=x11`、`--disable-gpu` 等）
 
-Android 端用 WebView 打開 `http://127.0.0.1:6080`。因為 PRoot 與 App 共用網路命名空間，guest 聽的本機埠就是裝置上的本機埠。頂列會回報顯示伺服器與 chatgpt 的啟動狀態；必要時可展開紀錄。
+Android 端要等 **5900 與 6080 都在聽**、且 `vnc.html` 可取用後，才用 WebView 打開 `http://127.0.0.1:6080/vnc.html?autoconnect=true&reconnect=true&encrypt=0&host=127.0.0.1&port=6080&path=websockify`。因為 PRoot 與 App 共用網路命名空間，guest 聽的本機埠就是裝置上的本機埠。頂列會依序回報 Xvfb、x11vnc、websockify、chatgpt 的狀態；畫面連上後不會被後續啟動訊息蓋掉。必要時可展開紀錄。
 
 這是**軟體繪製的 X11**，不是裝置原生視窗，可能較慢或偶有閃爍。第一次進入官方 App 需要用你自己的 OpenAI／ChatGPT 帳號登入。官方程式若無法在 PRoot 裡活下來，視窗會停在紀錄頁，可改用「開啟終端（後援）」排查。終端是工作區登入 shell，**不再預設啟動 musl CLI**。
 

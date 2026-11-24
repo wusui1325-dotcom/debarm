@@ -7,8 +7,11 @@ import com.wusper.debarm.core.DebArmPaths
 import com.wusper.debarm.core.Proot
 import com.wusper.debarm.core.Pty
 import java.io.ByteArrayOutputStream
+import com.wusper.debarm.core.CodexCatalog
+import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
@@ -86,9 +89,17 @@ class DesktopSession(
         }
         thread(name = "debarm-desktop-port", isDaemon = true) {
             var attempts = 0
+            // Do not load noVNC until both x11vnc (5900) and websockify (6080 + vnc.html)
+            // are actually accepting connections. HTTP on 6080 alone is not enough:
+            // the page can render while the WebSocket proxy to 5900 still fails.
             while (running.get() && attempts < 180) {
-                if (isPortOpen()) {
-                    if (readyOnce.compareAndSet(false, true)) {
+                if (isDisplayStackReady()) {
+                    try {
+                        Thread.sleep(400)
+                    } catch (_: InterruptedException) {
+                        return@thread
+                    }
+                    if (running.get() && isDisplayStackReady() && readyOnce.compareAndSet(false, true)) {
                         main.post { onReady() }
                     }
                     return@thread
@@ -123,7 +134,7 @@ class DesktopSession(
     }
 
     companion object {
-        fun isPortOpen(host: String = "127.0.0.1", port: Int = com.wusper.debarm.core.CodexCatalog.displayPort): Boolean {
+        fun isPortOpen(host: String = "127.0.0.1", port: Int = CodexCatalog.displayPort): Boolean {
             return try {
                 Socket().use { socket ->
                     socket.connect(InetSocketAddress(host, port), 250)
@@ -132,6 +143,30 @@ class DesktopSession(
             } catch (_: Exception) {
                 false
             }
+        }
+
+        fun isNovncHttpReady(host: String = "127.0.0.1", port: Int = CodexCatalog.displayPort): Boolean {
+            return try {
+                val url = URL("http://$host:$port/vnc.html")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.connectTimeout = 400
+                conn.readTimeout = 400
+                conn.instanceFollowRedirects = false
+                conn.requestMethod = "GET"
+                try {
+                    conn.responseCode in 200..399
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        fun isDisplayStackReady(): Boolean {
+            return isPortOpen("127.0.0.1", CodexCatalog.vncPort) &&
+                isPortOpen("127.0.0.1", CodexCatalog.displayPort) &&
+                isNovncHttpReady()
         }
     }
 }
