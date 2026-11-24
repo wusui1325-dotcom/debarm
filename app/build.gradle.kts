@@ -35,8 +35,8 @@ android {
         create("codex") {
             dimension = "edition"
             applicationId = "com.wusper.debarm.codex"
-            versionCode = 13
-            versionName = "1.0.12"
+            versionCode = 14
+            versionName = "1.0.13"
             buildConfigField("boolean", "CODEX_EDITION", "true")
         }
     }

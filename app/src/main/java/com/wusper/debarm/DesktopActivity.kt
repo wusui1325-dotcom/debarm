@@ -174,6 +174,28 @@ class DesktopActivity : ComponentActivity() {
         enterImmersive()
     }
 
+    /**
+     * Official ChatGPT / Electron / Chromium writes a lot of stderr in PRoot
+     * (D-Bus UPower, "Sign in to ChatGPT to check remote control
+     * authorization", "Workspace routing is unavailable", HTTP 432
+     * /wham/usage, and any line containing "failed"). Those are expected
+     * before login and must never be treated as a fatal launch failure.
+     * Only the start-script's own "debarm:" fatal lines count, and not
+     * the "first start failed, retrying" attempt.
+     */
+    private fun isFatalStartupLine(chunk: String): Boolean {
+        return chunk.lineSequence().any { raw ->
+            val line = raw.trim()
+            if (!line.startsWith("debarm:")) return@any false
+            val lower = line.lowercase()
+            if ("retrying" in lower) return@any false
+            "failed to" in lower ||
+                "is not installed" in lower ||
+                "not found" in lower ||
+                "stopped before" in lower
+        }
+    }
+
     private fun appendLog(chunk: String) {
         val next = (logText.value + chunk).takeLast(8000)
         logText.value = next
@@ -189,11 +211,21 @@ class DesktopActivity : ComponentActivity() {
                 if (!stackReady.value) statusText.value = "畫面通道已就緒，正在啟動官方 ChatGPT…"
             "chatgpt exited" in line ->
                 statusText.value = "官方程式已結束。請看紀錄，或開啟終端後援。"
-            "failed" in line.lowercase() || "not found" in line.lowercase() || "not installed" in line.lowercase() -> {
-                statusText.value = "啟動失敗：${chunk.trim().lineSequence().firstOrNull().orEmpty()}"
-                showLog.value = true
-                showChrome.value = true
-                applyImmersiveMode(false)
+            isFatalStartupLine(line) -> {
+                // Real start-script failure. Expected Electron/D-Bus noise
+                // never reaches here. After the display stack is already
+                // up, leave the desktop visible and let onExit report a
+                // process death if it actually happens.
+                if (!stackReady.value) {
+                    statusText.value = "啟動失敗：${
+                        chunk.trim().lineSequence()
+                            .firstOrNull { it.trim().startsWith("debarm:") }
+                            .orEmpty()
+                    }"
+                    showLog.value = true
+                    showChrome.value = true
+                    applyImmersiveMode(false)
+                }
             }
         }
     }
@@ -517,7 +549,9 @@ private fun DesktopScreen(
                         .background(Ink),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(status, color = Cream, fontSize = 15.sp)
+                    // Always a short connecting message — official Electron
+                    // stderr must not replace this with「啟動失敗」。
+                    Text("正在連上畫面…", color = Cream, fontSize = 15.sp)
                 }
             }
             if (immersive) {

@@ -25,7 +25,8 @@
 - **1.1.5**：修好終端全黑、連提示符都沒有。改用原生文字顯示 PTY 輸出；對 bash 有效，但無法正確畫 Codex TUI。
 - **1.1.4**：修好輸入欄按 Enter／「前往」沒有把指令送進 shell。改用原生輸入欄與「送出」按鈕。
 - **1.1.3**：修好「鍵盤能打、終端卻不顯示文字」。1.1.2 能彈出軟鍵盤，但許多輸入法會把字母先當組字，要等到空白或 Enter 才送出。
-- **Codex 專屬版 1.0.12**（另開套件 `com.wusper.debarm.codex`）：在 1.0.11 已能連上官方視窗之後，改成 App 自己的沉浸式全螢幕（不走瀏覽器 Fullscreen API，避免「Fullscreen is not supported」），藏掉 noVNC 左側工具列與「Connecting…」蓋層，並依裝置解析度（最長邊最多 1920）啟動 Xvfb，讓畫面鋪滿。左上角「選單」可退出全螢幕、看紀錄或開終端。覆蓋即可，不必重下載官方 deb。不影響通用 DebArm 1.1.8。
+- **Codex 專屬版 1.0.13**（另開套件 `com.wusper.debarm.codex`）：修好 1.0.12 把官方 ChatGPT／Electron 尚未登入時的 stderr（D-Bus UPower、remote control authorization、Workspace routing is unavailable、HTTP 432）誤判成「啟動失敗」，因而擋住登入頁。這類雜訊仍寫入紀錄，但只有啟動腳本自己的致命錯誤或進程退出才會報失敗。1.0.12 的全螢幕與 Connecting 修法保留。覆蓋即可，不必重下載官方 deb。不影響通用 DebArm 1.1.8。
+- **Codex 專屬版 1.0.12**：改成 App 自己的沉浸式全螢幕，藏掉 noVNC 左側工具列與「Connecting…」蓋層，並依裝置解析度啟動 Xvfb。
 - **Codex 專屬版 1.0.11**：修好 1.0.10 啟動官方桌面時停在 noVNC「Failed to connect to server」。會等 5900 與 6080 都就緒才自動連線。
 - **Codex 專屬版 1.0.10**：修好 1.0.9 在官方套件已 `Setting up chatgpt` 後仍報找不到執行檔。官方入口是 `/usr/bin/chatgpt`（指向 63 字元的 `codex-launcher`），真正的 ELF 是 `/usr/lib/chatgpt/ChatGPT`。詳見 [docs/CODEX.md](docs/CODEX.md)。
 - **1.1.2**：修好手機終端無法彈出軟鍵盤。先前畫面用的 xterm 輸入框在螢幕外且寬高為 0，Android 不會把它當可編輯欄。
