@@ -43,11 +43,10 @@ class TerminalInputView(context: Context) : View(context) {
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
-            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
-            InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
         outAttrs.imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or
             EditorInfo.IME_FLAG_NO_FULLSCREEN or
-            EditorInfo.IME_ACTION_NONE
+            EditorInfo.IME_ACTION_SEND
         outAttrs.initialSelStart = 0
         outAttrs.initialSelEnd = 0
         return Connection(this)
@@ -92,14 +91,36 @@ class TerminalInputView(context: Context) : View(context) {
         }
 
         override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
-            val next = text?.toString() ?: ""
+            var next = text?.toString() ?: ""
             if (composing.isNotEmpty()) {
                 sendDel(composing.length)
                 composing = ""
             }
-            send(next)
+            // IME Enter often arrives as a newline in commitText, not a key event.
+            if (next == "\n" || next == "\r" || next == "\r\n") {
+                host.onInput(CR)
+            } else if (next.contains('\n') || next.contains('\r')) {
+                next = next.replace("\r\n", "\n").replace('\r', '\n')
+                val parts = next.split('\n')
+                parts.forEachIndexed { i, part ->
+                    if (part.isNotEmpty()) send(part)
+                    if (i < parts.lastIndex) host.onInput(CR)
+                }
+            } else {
+                send(next)
+            }
             editable.clear()
             finishComposingText()
+            return true
+        }
+
+        override fun performEditorAction(editorAction: Int): Boolean {
+            if (composing.isNotEmpty()) {
+                // Composing is already echoed to the PTY; just confirm the line.
+                composing = ""
+                editable.clear()
+            }
+            host.onInput(CR)
             return true
         }
 
@@ -144,6 +165,13 @@ class TerminalInputView(context: Context) : View(context) {
     }
 
     companion object {
+        val CR: ByteArray = byteArrayOf(0x0d)
+
+        fun isEnterKey(event: KeyEvent): Boolean {
+            return event.keyCode == KeyEvent.KEYCODE_ENTER ||
+                event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+        }
+
         fun keyEventToBytes(event: KeyEvent): ByteArray? {
             val encoded = when (event.keyCode) {
                 KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> "\r"

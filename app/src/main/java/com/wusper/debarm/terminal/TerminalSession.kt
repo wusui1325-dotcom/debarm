@@ -25,25 +25,37 @@ class TerminalSession(
     private val writeLock = Any()
     private val pendingWrites = ArrayDeque<ByteArray>()
 
+    val isLive: Boolean
+        get() = running.get() && masterFd >= 0
+
     fun start(rows: Int, cols: Int) {
         if (!running.compareAndSet(false, true)) return
-        paths.ensureWorkDirs()
-        Proot.assertRunnable(paths)
-        Pty.ensureLoaded()
-        val argv = if (launchCodex) CodexRuntime.argv(paths) else Proot.argv(paths, emptyList(), loginShell = true)
-        val ids = Pty.nativeStart(
-            argv = argv,
-            envp = Proot.envp(paths),
-            cwd = paths.filesDir.absolutePath,
-            rows = rows,
-            cols = cols,
-        )
-        synchronized(writeLock) {
-            masterFd = ids[0]
-            pid = ids[1]
-            while (pendingWrites.isNotEmpty()) {
-                writeUnlocked(pendingWrites.removeFirst())
+        try {
+            paths.ensureWorkDirs()
+            Proot.assertRunnable(paths)
+            Pty.ensureLoaded()
+            val argv = if (launchCodex) CodexRuntime.argv(paths) else Proot.argv(paths, emptyList(), loginShell = true)
+            val ids = Pty.nativeStart(
+                argv = argv,
+                envp = Proot.envp(paths),
+                cwd = paths.filesDir.absolutePath,
+                rows = rows,
+                cols = cols,
+            )
+            synchronized(writeLock) {
+                masterFd = ids[0]
+                pid = ids[1]
+                while (pendingWrites.isNotEmpty()) {
+                    writeUnlocked(pendingWrites.removeFirst())
+                }
             }
+        } catch (e: Exception) {
+            running.set(false)
+            synchronized(writeLock) {
+                masterFd = -1
+                pid = -1
+            }
+            throw e
         }
         thread(name = "debarm-pty-read", isDaemon = true) {
             val buf = ByteArray(32 * 1024)
@@ -74,26 +86,36 @@ class TerminalSession(
         }
     }
 
-    fun write(bytes: ByteArray) {
-        if (bytes.isEmpty()) return
+    /**
+     * @return true if the bytes were written to the PTY (or reliably queued
+     *         until it is up). false if the session is already dead.
+     */
+    fun write(bytes: ByteArray): Boolean {
+        if (bytes.isEmpty()) return true
         synchronized(writeLock) {
             if (masterFd < 0) {
+                if (!running.get()) return false
                 pendingWrites.addLast(bytes.copyOf())
-                return
+                return true
             }
-            writeUnlocked(bytes)
+            return writeUnlocked(bytes)
         }
     }
 
-    private fun writeUnlocked(bytes: ByteArray) {
+    private fun writeUnlocked(bytes: ByteArray): Boolean {
         val fd = masterFd
-        if (fd < 0) return
+        if (fd < 0) return false
         var off = 0
         while (off < bytes.size) {
-            val n = Pty.nativeWrite(fd, bytes, off, bytes.size - off)
-            if (n <= 0) break
+            val n = try {
+                Pty.nativeWrite(fd, bytes, off, bytes.size - off)
+            } catch (_: Exception) {
+                return false
+            }
+            if (n <= 0) return false
             off += n
         }
+        return true
     }
 
     fun resize(rows: Int, cols: Int) {
