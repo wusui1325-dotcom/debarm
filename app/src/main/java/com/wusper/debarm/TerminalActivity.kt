@@ -331,11 +331,19 @@ class TerminalActivity : ComponentActivity() {
         )
         this.session = session
         val bridge = TerminalBridge(
-            onInput = { bytes -> writeToPty(bytes) },
-            onSize = { rows, cols -> session.resize(rows, cols) },
-            onReady = { fitAndFlush(wv) },
-            onError = { err ->
-                runOnUi { statusText.value = "終端畫面載入失敗：$err" }
+            handleInput = { bytes -> writeToPty(bytes) },
+            handleSize = { rows, cols -> session.resize(rows, cols) },
+            handleReady = { fitAndFlush(wv) },
+            handleError = { err ->
+                // Do not blank the terminal for a non-fatal bridge error;
+                // keep the status line as a warning instead.
+                runOnUi {
+                    if ("onSize" in err) {
+                        statusText.value = "畫面已就緒（視窗大小回報失敗，顯示不受影響）· 已收 $bytesIn 字元"
+                    } else {
+                        statusText.value = "終端警告：$err"
+                    }
+                }
             },
         )
         wv.webViewClient = object : WebViewClient() {

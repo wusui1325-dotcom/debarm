@@ -119,8 +119,14 @@ class TerminalSession(
     }
 
     fun resize(rows: Int, cols: Int) {
-        val fd = masterFd
-        if (fd >= 0) Pty.nativeSetWinsize(fd, rows, cols)
+        if (rows <= 0 || cols <= 0) return
+        val fd = synchronized(writeLock) { masterFd }
+        if (fd >= 0) {
+            try {
+                Pty.nativeSetWinsize(fd, rows, cols)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     fun close() {

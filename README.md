@@ -19,12 +19,13 @@
 
 ## 版本
 
-- **1.1.7**：修好每次進入終端都停在「畫面沒就緒」。1.1.6 用 `loadDataWithBaseURL` 載入內嵌 xterm，在較新的 Chromium WebView（含小米 HyperOS／Android 16）常會變成不透明來源，`@JavascriptInterface` 不會注入，`DebArm.onReady` 永遠不會被呼叫，PTY 輸出就卡在佇列裡。現在改從 `https://appassets.androidplatform.net` 攔截載入（真正的 https 來源），並用 `evaluateJavascript` 探測 `DebArmTerm` 作為備援，不單靠 onReady。請覆蓋安裝本版。
+- **1.1.8**：修好畫面已就緒卻出現紅字「Error invoking onSize: Java exception was raised during method invocation」、提示符被清掉。根因是 `TerminalBridge.onSize` 與建構參數同名，Kotlin 會無窮遞迴，WebView 把例外丟回頁面後，錯誤處理把整個終端 DOM 蓋掉。現在介面改名、參數以 Double 接收、工作切到主執行緒，且 onSize 失敗不再摧毀畫面。請覆蓋安裝本版。
+- **1.1.7**：修好每次進入終端都停在「畫面沒就緒」。改從 `https://appassets.androidplatform.net` 攔截載入內嵌 xterm。
 - **1.1.6**：用內嵌 xterm 畫 Codex TUI；但 `loadDataWithBaseURL` 在部分 WebView 上無法觸發就緒回呼。
 - **1.1.5**：修好終端全黑、連提示符都沒有。改用原生文字顯示 PTY 輸出；對 bash 有效，但無法正確畫 Codex TUI。
 - **1.1.4**：修好輸入欄按 Enter／「前往」沒有把指令送進 shell。改用原生輸入欄與「送出」按鈕。
 - **1.1.3**：修好「鍵盤能打、終端卻不顯示文字」。1.1.2 能彈出軟鍵盤，但許多輸入法會把字母先當組字，要等到空白或 Enter 才送出。
-- **Codex 專屬版 1.0.6**（另開套件 `com.wusper.debarm.codex`）：沿用同一套終端輸入與 Enter／送出修正。只啟動官方 Codex，工作區在 App 私有目錄，並可申請裝置儲存完全權限。詳見 [docs/CODEX.md](docs/CODEX.md)。不影響通用 DebArm。
+- **Codex 專屬版 1.0.7**（另開套件 `com.wusper.debarm.codex`）：沿用同一套終端輸入與 Enter／送出修正。只啟動官方 Codex，工作區在 App 私有目錄，並可申請裝置儲存完全權限。詳見 [docs/CODEX.md](docs/CODEX.md)。不影響通用 DebArm。
 - **1.1.2**：修好手機終端無法彈出軟鍵盤。先前畫面用的 xterm 輸入框在螢幕外且寬高為 0，Android 不會把它當可編輯欄。
 - **1.1.1**：修正安裝環境解壓後出現「無法執行 guest 指令（exit 139）」的問題。先前為了讓 PRoot 從 App 的 `nativeLibraryDir` 載入 `libtalloc`，用 patchelf 改寫了 ELF，卻破壞了 `INTERP` 與 `.dynstr` 段，導致 PRoot 一啟動就段錯誤。現在改用未改寫的上游二進制，在執行時把 `libtalloc.so.2` 放到 App 私有目錄並以 `LD_LIBRARY_PATH` 載入。PTY 函式庫也改為 16 KB 頁面對齊。請覆蓋安裝本版；若先前安裝失敗，請再點一次「安裝 Debian 環境」（已解壓的檔案可沿用）。
 - **1.1.0**：APK 從約 19.45 MB 壓到約 1.57 MB，並整理介面與套件清單效能。

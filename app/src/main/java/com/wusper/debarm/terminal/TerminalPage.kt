@@ -97,12 +97,16 @@ $css
 (function () {
   function report(err) {
     try {
-      document.body.style.color = "#E07A6A";
-      document.body.style.padding = "12px";
-      document.body.style.fontFamily = "monospace";
-      document.body.textContent = "終端畫面載入失敗：" + err;
+      if (!window.DebArmTerm) {
+        document.body.style.color = "#E07A6A";
+        document.body.style.padding = "12px";
+        document.body.style.fontFamily = "monospace";
+        document.body.textContent = "終端畫面載入失敗：" + err;
+      }
     } catch (e) {}
-    if (window.DebArm && window.DebArm.onError) window.DebArm.onError(String(err));
+    try {
+      if (window.DebArm && window.DebArm.onError) window.DebArm.onError(String(err));
+    } catch (e) {}
   }
   try {
     const Term = (window.Terminal && window.Terminal.Terminal) || window.Terminal;
@@ -149,8 +153,12 @@ $css
     }
     function doFit() {
       try { if (fit) fit.fit(); } catch (e) {}
-      if (window.DebArm && window.DebArm.onSize) {
-        window.DebArm.onSize(term.cols, term.rows);
+      try {
+        if (window.DebArm && window.DebArm.onSize) {
+          window.DebArm.onSize(term.cols, term.rows);
+        }
+      } catch (e) {
+        // onSize must never destroy the terminal; PTY output should still show.
       }
     }
     window.addEventListener("resize", doFit);
