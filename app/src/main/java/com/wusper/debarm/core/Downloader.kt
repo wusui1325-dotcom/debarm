@@ -60,8 +60,8 @@ object Downloader {
         if (redirects > 8) throw IOException("重新導向次數過多")
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.instanceFollowRedirects = false
-        conn.connectTimeout = 20_000
-        conn.readTimeout = 30_000
+        conn.connectTimeout = 30_000
+        conn.readTimeout = 180_000
         conn.setRequestProperty("User-Agent", "DebArm/1.0 (Android; +https://github.com/wusui1325-dotcom/debarm)")
         conn.connect()
         val code = conn.responseCode

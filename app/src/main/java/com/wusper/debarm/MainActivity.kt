@@ -65,6 +65,9 @@ class MainActivity : ComponentActivity() {
                         onPrepare = { app.env.prepareCodex() },
                         onCancel = { app.env.cancelWork() },
                         onLaunch = {
+                            startActivity(Intent(this, DesktopActivity::class.java))
+                        },
+                        onLaunchTerminal = {
                             startActivity(
                                 Intent(this, TerminalActivity::class.java)
                                     .putExtra(TerminalActivity.EXTRA_LAUNCH_CODEX, true),

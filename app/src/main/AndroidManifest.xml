@@ -36,5 +36,11 @@
             android:exported="false"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|keyboard|keyboardHidden|screenLayout" />
+
+        <activity
+            android:name=".DesktopActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|keyboard|keyboardHidden|screenLayout" />
     </application>
 </manifest>

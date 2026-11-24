@@ -123,7 +123,7 @@ class EnvironmentController(private val app: Application) {
             return
         }
         val codexReady = CodexRuntime.isInstalled(paths)
-        val codexPackaged = CodexRuntime.isPackaged(paths)
+        val codexPackaged = CodexRuntime.isInstalled(paths)
         val codexVersion = if (codexReady) CodexCatalog.version else null
         if (isReady()) {
             val label = readDebianLabel()
@@ -352,8 +352,10 @@ class EnvironmentController(private val app: Application) {
             if (!Arch.isArm64Device()) {
                 throw IOException("這支 App 只在 arm64-v8a 裝置上原生執行 aarch64 二進制，不模擬 x86。\n${Arch.deviceSummary()}")
             }
-            if (freeBytes() < 900L * 1024 * 1024) {
-                throw IOException("可用空間不足 900 MB（Debian 環境與官方完整 Codex CLI 套件約需此空間）。目前剩餘 ${formatBytes(freeBytes())}。")
+            if (freeBytes() < CodexCatalog.minFreeBytes) {
+                throw IOException(
+                    "可用空間不足 ${formatBytes(CodexCatalog.minFreeBytes)}（Debian、顯示伺服器與官方桌面套件約需 4 GB，套件下載約 464 MB、解壓後約 1.5 GB）。目前剩餘 ${formatBytes(freeBytes())}。",
+                )
             }
             Proot.assertRunnable(paths)
             if (!isReady()) {
@@ -374,7 +376,7 @@ class EnvironmentController(private val app: Application) {
                 configureRootfs()
             }
             CodexRuntime.ensureGuestUser(paths)
-            if (!CodexRuntime.isPackaged(paths)) {
+            if (!CodexRuntime.isInstalled(paths)) {
                 installOfficialCodex()
             }
             refreshNow()
@@ -394,18 +396,54 @@ class EnvironmentController(private val app: Application) {
         _state.update {
             it.copy(
                 phase = EnvUiState.Phase.Downloading,
-                message = "正在下載官方完整 Codex CLI 套件 ${CodexCatalog.version}…",
+                message = "正在準備官方 ChatGPT 桌面套件 ${CodexCatalog.version}…",
                 error = null,
                 downloadRead = 0,
                 downloadTotal = CodexCatalog.bytes,
             )
         }
-        appendLog("下載官方完整 Codex CLI 套件 ${CodexCatalog.version}（${CodexCatalog.assetName}）")
+        appendLog("安裝官方 Linux 桌面套件 ${CodexCatalog.assetName}")
+
+        _state.update { it.copy(phase = EnvUiState.Phase.Configuring, message = "正在更新套件索引並安裝顯示伺服器…") }
+        val required = CodexCatalog.displayStackRequired.joinToString(" ")
+        val optional = CodexCatalog.displayStackOptional.joinToString(" ")
+        val apt = HostProcess.run(
+            argv = Proot.argv(
+                paths,
+                listOf(
+                    "apt-get update && " +
+                        "apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold $required && " +
+                        "{ apt-get install -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold $optional || true; }",
+                ),
+            ),
+            env = Proot.hostEnv(paths),
+            timeoutMs = 25 * 60 * 1000L,
+            cancelled = ::isCancelled,
+            onChunk = { appendLog(it) },
+        )
+        appendLog(apt.output.takeLast(2000))
+        if (isCancelled()) throw IOException("已取消")
+        if (apt.exitCode != 0) {
+            throw IOException(
+                "安裝顯示伺服器失敗（exit ${apt.exitCode}）。需要 Xvfb、x11vnc、noVNC／websockify 才能打開官方桌面視窗。請看下方紀錄。",
+            )
+        }
+
+        if (isCancelled()) throw IOException("已取消")
+        _state.update {
+            it.copy(
+                phase = EnvUiState.Phase.Downloading,
+                message = "正在下載官方桌面套件（約 ${formatBytes(CodexCatalog.bytes)}）…",
+                downloadRead = 0,
+                downloadTotal = CodexCatalog.bytes,
+            )
+        }
+        appendLog("下載 ${CodexCatalog.assetName}（SHA-256 ${CodexCatalog.sha256}）")
         val haveCache = paths.codexDownloadFile.exists() &&
             runCatching { Sha256.of(paths.codexDownloadFile) }.getOrNull()
                 ?.let { Sha256.equal(it, CodexCatalog.sha256) } == true
         if (haveCache) {
-            appendLog("已有校驗相符的官方 Codex 快取，略過下載。")
+            appendLog("已有校驗相符的官方套件快取，略過下載。")
         } else {
             val used = Downloader.downloadWithFallback(
                 urls = CodexCatalog.urls,
@@ -418,7 +456,7 @@ class EnvironmentController(private val app: Application) {
                     it.copy(
                         downloadRead = read,
                         downloadTotal = if (total > 0) total else it.downloadTotal,
-                        message = "正在下載官方完整 Codex CLI 套件（${formatBytes(read)}" +
+                        message = "正在下載官方桌面套件（${formatBytes(read)}" +
                             if (total > 0) " / ${formatBytes(total)}）" else "）",
                     )
                 }
@@ -426,28 +464,52 @@ class EnvironmentController(private val app: Application) {
             appendLog("已由 $used 完成下載並通過 SHA-256 校驗。")
         }
         if (isCancelled()) throw IOException("已取消")
+
         _state.update {
-            it.copy(phase = EnvUiState.Phase.Extracting, message = "正在安裝官方完整 Codex CLI 套件…")
+            it.copy(phase = EnvUiState.Phase.InstallingDeb, message = "正在以 dpkg 安裝官方 chatgpt 套件…")
         }
-        val dest = CodexRuntime.packageRoot(paths)
-        SafeTarGz.extractCodexPackage(paths.codexDownloadFile, dest)
-        if (!CodexRuntime.isPackaged(paths)) {
-            throw IOException("官方套件解壓後找不到完整佈局（codex-package.json + bin/codex）。")
-        }
-        for (link in listOf(
-            File(paths.rootfsDir, "usr/local/bin/codex"),
-            File(paths.rootfsDir, "usr/bin/codex"),
-        )) {
-            link.parentFile?.mkdirs()
-            runCatching {
-                if (link.exists()) link.delete()
-                Files.createSymbolicLink(link.toPath(), File(CodexCatalog.guestBinaryPath).toPath())
+        val dpkg = HostProcess.run(
+            argv = Proot.argv(
+                paths,
+                listOf(
+                    "dpkg -i '/host-cache/${CodexCatalog.assetName}' || apt-get install -f -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold",
+                ),
+                extraBinds = listOf(paths.cacheDir.absolutePath to "/host-cache"),
+            ),
+            env = Proot.hostEnv(paths),
+            timeoutMs = 25 * 60 * 1000L,
+            cancelled = ::isCancelled,
+            onChunk = { appendLog(it) },
+        )
+        if (dpkg.exitCode != 0) {
+            _state.update { it.copy(message = "dpkg 未完全成功，嘗試修復依賴後再安裝…") }
+            val repair = HostProcess.run(
+                argv = Proot.argv(
+                    paths,
+                    listOf(
+                        "apt-get update && apt-get install -f -y && dpkg -i '/host-cache/${CodexCatalog.assetName}'",
+                    ),
+                    extraBinds = listOf(paths.cacheDir.absolutePath to "/host-cache"),
+                ),
+                env = Proot.hostEnv(paths),
+                timeoutMs = 25 * 60 * 1000L,
+                cancelled = ::isCancelled,
+                onChunk = { appendLog(it) },
+            )
+            if (repair.exitCode != 0) {
+                throw IOException("安裝官方 chatgpt 套件失敗（exit ${repair.exitCode}）。請看下方紀錄。")
             }
         }
+        CodexRuntime.ensureStartScript(paths)
+        if (CodexRuntime.officialBinary(paths) == null) {
+            throw IOException("dpkg 已結束，但找不到官方 chatgpt 執行檔。請看下方紀錄。")
+        }
         paths.codexReadyMarker.writeText(
-            "codex-package ${CodexCatalog.version} ${CodexCatalog.sha256}\n",
+            "${CodexCatalog.packageName} ${CodexCatalog.version} ${CodexCatalog.sha256}\n",
         )
-        appendLog("已安裝官方完整 Codex CLI 套件 ${CodexCatalog.version} 到 ${CodexCatalog.packageRoot}")
+        CodexRuntime.ensureWorkspace(paths)
+        CodexRuntime.ensureGuestUser(paths)
+        appendLog("已安裝官方桌面套件 ${CodexCatalog.packageName} ${CodexCatalog.version}")
     }
 
     private suspend fun runInstallDeb(uri: Uri) {

@@ -47,6 +47,7 @@ fun CodexScreen(
     onPrepare: () -> Unit,
     onCancel: () -> Unit,
     onLaunch: () -> Unit,
+    onLaunchTerminal: () -> Unit,
     onRequestStorage: () -> Unit,
     onDelete: () -> Unit,
     onRefresh: () -> Unit,
@@ -67,9 +68,9 @@ fun CodexScreen(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("Codex", style = MaterialTheme.typography.headlineLarge, color = Cream)
+        Text("ChatGPT／Codex", style = MaterialTheme.typography.headlineLarge, color = Cream)
         Text(
-            "只跑官方 Codex／ChatGPT。工作區在 App 私有目錄；對裝置儲存申請完全權限，讓內外空間互聯。環境會讓程式以為自己在一部 Debian 電腦上，並可上網。正式目標是官方 Linux 桌面 .deb；目前先啟動官方完整 CLI 套件。",
+            "只跑官方 Linux 桌面版（chatgpt arm64 .deb）。工作區在 App 私有目錄；對裝置儲存申請完全權限，讓內外空間互聯。環境會讓程式以為自己在一部有螢幕的 Debian 電腦上，並可上網。",
             style = MaterialTheme.typography.bodyMedium,
             color = Muted,
         )
@@ -85,13 +86,9 @@ fun CodexScreen(
                     Text(state.debianLabel, color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
-                    "官方 Codex CLI ${CodexCatalog.version}" +
-                        when {
-                            state.codexPackaged -> " · 完整套件已就緒"
-                            state.codexReady -> " · 可啟動（精簡安裝，建議升級完整套件）"
-                            else -> " · 尚未安裝"
-                        },
-                    color = if (state.codexPackaged) Moss else if (state.codexReady) GoldDim else GoldDim,
+                    "官方桌面 ${CodexCatalog.packageName} ${CodexCatalog.version}" +
+                        if (state.codexReady) " · 已就緒" else " · 尚未安裝",
+                    color = if (state.codexReady) Moss else GoldDim,
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 val used = if (state.diskUsedBytes > 0) {
@@ -152,16 +149,16 @@ fun CodexScreen(
         ) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("官方來源", style = MaterialTheme.typography.titleMedium, color = Cream)
-                Text("OpenAI Codex CLI ${CodexCatalog.version}（${CodexCatalog.gitTag}）完整套件", color = Cream, style = MaterialTheme.typography.bodySmall)
+                Text("官方 ChatGPT／Codex Linux 桌面 ${CodexCatalog.version}", color = Cream, style = MaterialTheme.typography.bodySmall)
                 Text("產物：${CodexCatalog.assetName}", fontFamily = FontFamily.Monospace, color = Muted, style = MaterialTheme.typography.bodySmall)
                 Text("SHA-256：${CodexCatalog.sha256}", fontFamily = FontFamily.Monospace, color = Muted, style = MaterialTheme.typography.bodySmall)
                 Text(
-                    "與官方安裝腳本相同的完整套件（含 codex-package.json 與附屬資源），不是只解出單一 musl 執行檔。來源：${CodexCatalog.officialInstallSh}，優先 ${CodexCatalog.primaryUrl}，備用 GitHub Releases。授權 ${CodexCatalog.license}。",
+                    "來源 ${CodexCatalog.officialDocs}；版本化網址 ${CodexCatalog.primaryUrl}。首次準備會下載約 ${EnvironmentController.formatBytes(CodexCatalog.bytes)} 的官方 .deb（解壓後約 1.5 GB），並安裝 Xvfb／VNC 顯示堆疊。請預留約 4 GB 空間，保持 App 在前景。",
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "官方 Linux 桌面版是 ${CodexCatalog.DesktopDeb.assetName}（${CodexCatalog.DesktopDeb.version}，見 ${CodexCatalog.officialDocs}）。一鍵開啟該視窗還沒出貨；目前「啟動 Codex」會進入官方完整 CLI，並加上 --no-daemon，以便在 PRoot 裡穩定使用。",
+                    "「啟動官方桌面」會在 PRoot 裡開顯示器，再把畫面傳到本機視窗。這是軟體繪製的 X11，可能較慢；第一次進 App 需要用你的 OpenAI／ChatGPT 帳號登入。終端僅作後援，不再預設啟動命令列。",
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall,
                 )
@@ -175,16 +172,14 @@ fun CodexScreen(
                 modifier = Modifier.fillMaxWidth().height(54.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Ink),
             ) {
-                Text("啟動 Codex")
+                Text("啟動官方桌面")
             }
-            if (!state.codexPackaged) {
-                OutlinedButton(
-                    onClick = onPrepare,
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("升級為官方完整 CLI 套件（約 193 MB）")
-                }
+            OutlinedButton(
+                onClick = onLaunchTerminal,
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("開啟終端（後援）")
             }
         } else {
             Button(
@@ -193,7 +188,7 @@ fun CodexScreen(
                 modifier = Modifier.fillMaxWidth().height(54.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Ink),
             ) {
-                Text(if (state.phase == EnvUiState.Phase.Error) "重試準備" else "準備並安裝官方 Codex")
+                Text(if (state.phase == EnvUiState.Phase.Error) "重試準備" else "準備並安裝官方桌面套件")
             }
         }
 
