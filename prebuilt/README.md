@@ -2,7 +2,7 @@
 
 這裡放的是 **PRoot 主程式與其 loader、libtalloc、libandroid-shmem** 的 aarch64 Android 二進制，供 App 在執行時 `exec` 進入 Debian rootfs。
 
-這些檔案不是 DebArm 自己編譯的核心邏輯；它們來自 Termux 套件庫，並經 `patchelf` 調整依賴名稱，才能從本 App 的 `nativeLibraryDir` 載入（不再寫死 Termux 的 `/data/data/com.termux/...` 路徑）。
+這些檔案不是 DebArm 自己編譯的核心邏輯；它們來自 Termux 套件庫。PRoot 保持上游原樣（`NEEDED` 仍是 `libtalloc.so.2`）。Android 的 jniLibs 只能解出 `lib*.so`，因此 App 在執行時把 `libtalloc.so` 複製為 `filesDir/proot-lib/libtalloc.so.2`，再以 `LD_LIBRARY_PATH` 載入。不要用 patchelf 改寫 PRoot 的 program headers：1.1.0 曾因此在安裝環境後一執行 guest 就 SIGSEGV（exit 139）。
 
 | 檔案 | 來源套件 | 授權 |
 |---|---|---|

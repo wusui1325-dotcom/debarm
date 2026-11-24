@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Re-fetch Termux PRoot binaries, patchelf them for DebArm's jniLibs layout.
-# Requires: curl, sha256sum, dpkg-deb, patchelf.
+# Re-fetch Termux PRoot binaries for DebArm's jniLibs layout.
+# PRoot is copied unpatched: NEEDED stays libtalloc.so.2, which the App
+# stages at runtime via LD_LIBRARY_PATH. Do not patchelf PRoot — rewriting
+# program headers previously caused a SIGSEGV (exit 139) on first guest exec.
+# Requires: curl, sha256sum, dpkg-deb.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WORKDIR="${TMPDIR:-/tmp}/debarm-prebuilts-fetch"
@@ -38,9 +41,5 @@ cp -f "$P/bin/proot" "$ROOT/prebuilt/arm64-v8a/libproot.so"
 cp -f "$P/libexec/proot/loader" "$ROOT/prebuilt/arm64-v8a/libproot-loader.so"
 cp -f "$T/lib/libtalloc.so.2.5.0" "$ROOT/prebuilt/arm64-v8a/libtalloc.so"
 cp -f "$S/lib/libandroid-shmem.so" "$ROOT/prebuilt/arm64-v8a/libandroid-shmem.so"
-patchelf --replace-needed libtalloc.so.2 libtalloc.so "$ROOT/prebuilt/arm64-v8a/libproot.so"
-patchelf --remove-rpath "$ROOT/prebuilt/arm64-v8a/libproot.so"
-patchelf --remove-rpath "$ROOT/prebuilt/arm64-v8a/libtalloc.so" || true
-patchelf --remove-rpath "$ROOT/prebuilt/arm64-v8a/libandroid-shmem.so" || true
 (cd "$ROOT/prebuilt/arm64-v8a" && sha256sum libproot.so libproot-loader.so libtalloc.so libandroid-shmem.so)
 echo "OK. See prebuilt/README.md"

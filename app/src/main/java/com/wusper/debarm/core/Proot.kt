@@ -10,13 +10,36 @@ object Proot {
     const val GUEST_PATH =
         "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-    fun hostEnv(paths: DebArmPaths): Map<String, String> = mapOf(
-        "PROOT_LOADER" to paths.prootLoader.absolutePath,
-        "PROOT_TMP_DIR" to paths.prootTmpDir.absolutePath,
-        "LD_LIBRARY_PATH" to paths.nativeLibraryDir.absolutePath,
-        "TMPDIR" to paths.prootTmpDir.absolutePath,
-        "LANG" to "C.UTF-8",
+    private val ANDROID_HOST_ENV_KEYS = listOf(
+        "ANDROID_DATA",
+        "ANDROID_ROOT",
+        "ANDROID_ART_ROOT",
+        "ANDROID_I18N_ROOT",
+        "ANDROID_TZDATA_ROOT",
+        "ANDROID_RUNTIME_ROOT",
+        "ANDROID_ASSETS",
+        "ANDROID_STORAGE",
+        "EXTERNAL_STORAGE",
     )
+
+    fun hostEnv(paths: DebArmPaths): Map<String, String> {
+        paths.stageHostLibs()
+        val map = mutableMapOf(
+            "PROOT_LOADER" to paths.prootLoader.absolutePath,
+            "PROOT_TMP_DIR" to paths.prootTmpDir.absolutePath,
+            "LD_LIBRARY_PATH" to
+                "${paths.hostLibDir.absolutePath}:${paths.nativeLibraryDir.absolutePath}",
+            "TMPDIR" to paths.prootTmpDir.absolutePath,
+            "LANG" to "C.UTF-8",
+            "PATH" to "/system/bin:/system/xbin:/vendor/bin",
+        )
+        // Host-side Android libc/linker expect these; do not leak them into
+        // the guest (guest env is built with env -i below).
+        for (key in ANDROID_HOST_ENV_KEYS) {
+            System.getenv(key)?.let { map[key] = it }
+        }
+        return map
+    }
 
     fun envp(paths: DebArmPaths): Array<String> =
         hostEnv(paths).map { "${it.key}=${it.value}" }.toTypedArray()
@@ -83,6 +106,7 @@ object Proot {
     }
 
     fun assertRunnable(paths: DebArmPaths) {
+        paths.stageHostLibs()
         if (!paths.proot.exists()) {
             throw IllegalStateException("找不到 PRoot：${paths.proot.absolutePath}")
         }
@@ -91,6 +115,10 @@ object Proot {
         }
         if (!paths.proot.canExecute() || !paths.prootLoader.canExecute()) {
             throw IllegalStateException("PRoot 二進制無法執行，請確認 APK 已正確解出 native 庫。")
+        }
+        val talloc = File(paths.hostLibDir, "libtalloc.so.2")
+        if (!talloc.exists()) {
+            throw IllegalStateException("找不到 libtalloc.so.2（應從 nativeLibraryDir 的 libtalloc.so 複製）。")
         }
     }
 }

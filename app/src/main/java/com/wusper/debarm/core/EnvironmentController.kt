@@ -194,6 +194,7 @@ class EnvironmentController(private val app: Application) {
                     message = "安裝環境失敗",
                 )
             }
+            updateDiskAsync()
         }
     }
 
@@ -249,6 +250,7 @@ class EnvironmentController(private val app: Application) {
             paths.rootfsPartialDir.copyRecursively(paths.rootfsDir, overwrite = true)
             paths.rootfsPartialDir.deleteRecursively()
         }
+        updateDiskAsync()
     }
 
     private fun configureRootfs() {
@@ -283,16 +285,35 @@ class EnvironmentController(private val app: Application) {
 把 .deb 放到 /exchange 或用 App 的「安裝 .deb」。
 """,
         )
-        // Sanity check: actually exec a guest binary.
+        // Sanity check: first that PRoot itself starts, then a raw guest exec
+        // (avoid bash --login so a broken profile cannot mask a loader crash).
+        Proot.assertRunnable(paths)
+        val hostHelp = HostProcess.run(
+            argv = arrayOf(paths.proot.absolutePath, "--help"),
+            env = Proot.hostEnv(paths),
+            timeoutMs = 10_000,
+            cancelled = ::isCancelled,
+        )
+        if (hostHelp.output.isNotBlank()) {
+            appendLog(hostHelp.output.trim().lineSequence().take(6).joinToString("\n") + "\n")
+        }
+        if (hostHelp.exitCode == 139) {
+            throw IOException(
+                "PRoot 本身無法啟動（exit 139，SIGSEGV）。\n${hostHelp.output}",
+            )
+        }
         val probe = HostProcess.run(
-            argv = Proot.argv(paths, listOf("uname -m && dpkg --version | head -n 1")),
+            argv = Proot.argv(paths, listOf("/usr/bin/uname", "-m"), raw = true, cwd = "/"),
             env = Proot.hostEnv(paths),
             timeoutMs = 30_000,
             cancelled = ::isCancelled,
         )
         appendLog(probe.output.trim())
         if (probe.exitCode != 0) {
-            throw IOException("環境已解壓，但無法執行 guest 指令（exit ${probe.exitCode}）。\n${probe.output}")
+            val sig = if (probe.exitCode == 139) "，SIGSEGV" else ""
+            throw IOException(
+                "環境已解壓，但無法執行 guest 指令（exit ${probe.exitCode}$sig）。\n${probe.output}",
+            )
         }
         val uname = probe.output.lineSequence().firstOrNull()?.trim().orEmpty()
         if (uname.isNotEmpty() && uname != "aarch64") {

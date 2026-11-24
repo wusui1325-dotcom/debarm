@@ -17,6 +17,13 @@
 
 不需要 root，也不會改系統分割區。一切都在 App 自己的私有目錄裡。
 
+## 版本
+
+- **1.1.1**：修正安裝環境解壓後出現「無法執行 guest 指令（exit 139）」的問題。先前為了讓 PRoot 從 App 的 `nativeLibraryDir` 載入 `libtalloc`，用 patchelf 改寫了 ELF，卻破壞了 `INTERP` 與 `.dynstr` 段，導致 PRoot 一啟動就段錯誤。現在改用未改寫的上游二進制，在執行時把 `libtalloc.so.2` 放到 App 私有目錄並以 `LD_LIBRARY_PATH` 載入。PTY 函式庫也改為 16 KB 頁面對齊。請覆蓋安裝本版；若先前安裝失敗，請再點一次「安裝 Debian 環境」（已解壓的檔案可沿用）。
+- **1.1.0**：APK 從約 19.45 MB 壓到約 1.57 MB，並整理介面與套件清單效能。
+- **1.0.0**：第一個可側載版本。
+
+
 ## 架構：怎麼在沒有 root 的情況下跑 .deb
 
 ```
@@ -95,7 +102,7 @@ export JAVA_HOME=/path/to/jdk-17
 - 建議側載（已 minify / shrink）：`./gradlew :app:assembleRelease` → `app/build/outputs/apk/release/app-release.apk`
 - Debug（未壓縮程式碼，體積較大）：`./gradlew :app:assembleDebug`
 
-以本機 Android debug keystore 簽名，方便側載。**本倉不包含任何簽名密鑰**。請不要使用其他專案的金鑰。從 1.1.0 起已拿掉巨大的 Material Icons Extended 庫與桌面版 zstd JNI，並開啟 R8。
+以本機 Android debug keystore 簽名，方便側載。**本倉不包含任何簽名密鑰**。請不要使用其他專案的金鑰。從 1.1.0 起已拿掉巨大的 Material Icons Extended 庫與桌面版 zstd JNI，並開啟 R8。從 1.1.1 起不再 patchelf PRoot。
 
 重新抓取 PRoot 預先編譯檔（可選）：
 

@@ -29,7 +29,7 @@ object SafeTarXz {
                     while (entry != null) {
                         val stripped = strip(entry.name, stripComponents)
                         if (stripped != null) {
-                            extractEntry(tar, entry, destCanon, stripped)
+                            extractEntry(tar, entry, destCanon, stripped, stripComponents)
                             count++
                             if (count % 200L == 0L) onProgress(stripped, count)
                         }
@@ -54,6 +54,7 @@ object SafeTarXz {
         entry: TarArchiveEntry,
         destCanon: File,
         rel: String,
+        stripComponents: Int,
     ) {
         if (rel.split('/').any { it == ".." }) {
             throw IOException("壓縮檔含有非法路徑：$rel")
@@ -71,10 +72,14 @@ object SafeTarXz {
             }
             entry.isLink -> {
                 out.parentFile?.mkdirs()
-                val targetRel = strip(entry.linkName, 0) ?: entry.linkName
-                val target = File(destCanon, targetRel)
+                val candidates = listOfNotNull(
+                    strip(entry.linkName, stripComponents),
+                    strip(entry.linkName, 0),
+                    entry.linkName.trim().removePrefix("./"),
+                ).distinct()
+                val target = candidates.map { File(destCanon, it) }.firstOrNull { it.exists() }
                 if (out.exists()) out.delete()
-                if (target.exists()) {
+                if (target != null) {
                     try {
                         Files.createLink(out.toPath(), target.toPath())
                     } catch (_: Exception) {

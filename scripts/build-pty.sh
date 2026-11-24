@@ -23,6 +23,8 @@ OUT="$ROOT/prebuilt/arm64-v8a/libdebarm-pty.so"
   -L"$TC/sysroot/usr/lib/aarch64-linux-android/26" \
   -llog -lc -ldl -static-libstdc++ \
   -Wl,-soname,libdebarm-pty.so \
-  -Wl,--no-undefined
+  -Wl,--no-undefined \
+  -Wl,-z,max-page-size=16384 \
+  -Wl,-z,common-page-size=16384
 "$TC/bin/llvm-strip" --strip-unneeded "$OUT" || true
 sha256sum "$OUT"

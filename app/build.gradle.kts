@@ -14,8 +14,8 @@ android {
         // guest binaries from the app's writable filesDir (the Debian rootfs).
         // This app is meant to be sideloaded, not Play-distributed.
         targetSdk = 28
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.1.1"
         ndk {
             abiFilters += "arm64-v8a"
         }
